@@ -1,8 +1,15 @@
 import { connectToMcp, getConnectionStatus } from '@/lib/mcp/client'
+import type { McpServerConfig } from '@/lib/mcp/types'
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
-    const status = await connectToMcp()
+    const body = await req.json()
+    const config: McpServerConfig = {
+      serverUrl: body.serverUrl || '',
+      authHeader: body.authHeader || '',
+    }
+
+    const status = await connectToMcp(config)
     return Response.json(status)
   } catch (err) {
     return Response.json(
@@ -12,7 +19,7 @@ export async function POST() {
         toolCount: 0,
         error: err instanceof Error ? err.message : 'Connection failed',
       },
-      { status: 500 }
+      { status: 500 },
     )
   }
 }

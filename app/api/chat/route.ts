@@ -1,31 +1,29 @@
 import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai'
 import { z } from 'zod'
-import { SYSTEM_PROMPT, DEMO_CONTEXT } from '@/lib/agent/prompts'
-import { callTool, getCachedTools } from '@/lib/mcp/client'
+import { SYSTEM_PROMPT } from '@/lib/agent/prompts'
+import { callTool, getCachedTools, getCachedConfig } from '@/lib/mcp/client'
 import { getDefaultGatewayConfig, validateToolCall } from '@/lib/mcp/tool-gateway'
 import { redactDeep } from '@/lib/redaction'
 
 export const maxDuration = 60
 
 export async function POST(req: Request) {
-  const { messages, demoMode } = await req.json()
+  const { messages } = await req.json()
 
   const mcpTools = getCachedTools()
+  const mcpConfig = getCachedConfig()
   const gatewayConfig = getDefaultGatewayConfig()
 
   // Build the system prompt
   let systemPrompt = SYSTEM_PROMPT
-  if (demoMode) {
-    systemPrompt += '\n' + DEMO_CONTEXT
-  }
 
   // Add available tools context to system prompt
   if (mcpTools.length > 0) {
     systemPrompt += '\n\n## Available MCP Tools\n\n'
     systemPrompt += 'You have access to the following Saviynt MCP tools. Use them to gather real data:\n\n'
-    mcpTools.forEach((t) => {
+    for (const t of mcpTools) {
       systemPrompt += `- **${t.name}**: ${t.description || 'No description'}\n`
-    })
+    }
     systemPrompt += '\nCall these tools when you need identity data. Always call tools before making assertions about users, access, or risk.'
   }
 
@@ -43,7 +41,7 @@ export async function POST(req: Request) {
       description: mcpTool.description || `MCP tool: ${mcpTool.name}`,
       inputSchema,
       execute: async (args) => {
-        const result = await callTool(mcpTool.name, args as Record<string, unknown>)
+        const result = await callTool(mcpTool.name, args as Record<string, unknown>, mcpConfig || undefined)
         if (!result.success) {
           return { error: result.error, toolName: mcpTool.name }
         }

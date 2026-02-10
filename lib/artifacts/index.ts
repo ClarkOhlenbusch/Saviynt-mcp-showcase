@@ -42,7 +42,7 @@ export function artifactToMarkdown(artifact: Artifact): string {
   }
 
   md += '\n*Note: Evidence data has been sanitized. Sensitive fields have been redacted.*\n'
-  md += '*Evidence limited to available demo environment data.*\n'
+  md += '*Evidence based on real MCP tool call data.*\n'
 
   return md
 }
@@ -55,7 +55,7 @@ export function artifactToEvidenceJson(artifact: Artifact): string {
       type: artifact.type,
       generatedAt: new Date(artifact.createdAt).toISOString(),
       evidence: artifact.evidenceJson,
-      disclaimer: 'Sensitive data has been redacted. Evidence limited to available demo environment data.',
+      disclaimer: 'Sensitive data has been redacted. Evidence based on real MCP tool call data.',
     },
     null,
     2

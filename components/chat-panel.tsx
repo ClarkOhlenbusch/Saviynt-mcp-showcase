@@ -1,7 +1,6 @@
 'use client'
 
-import React from "react"
-
+import React from 'react'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
@@ -12,13 +11,13 @@ import { DemoPrompts } from './demo-prompts'
 import type { Artifact } from '@/lib/mcp/types'
 
 interface ChatPanelProps {
-  demoMode: boolean
+  mcpConnected: boolean
   onArtifactGenerated: (artifact: Artifact) => void
   onOpenArtifacts: () => void
   artifactCount: number
 }
 
-export function ChatPanel({ demoMode, onArtifactGenerated, onOpenArtifacts, artifactCount }: ChatPanelProps) {
+export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, artifactCount }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -27,13 +26,6 @@ export function ChatPanel({ demoMode, onArtifactGenerated, onOpenArtifacts, arti
   const { messages, sendMessage, status, stop } = useChat({
     transport: new DefaultChatTransport({
       api: '/api/chat',
-      prepareSendMessagesRequest: ({ id, messages: msgs }) => ({
-        body: {
-          messages: msgs,
-          id,
-          demoMode,
-        },
-      }),
     }),
   })
 
@@ -70,7 +62,6 @@ export function ChatPanel({ demoMode, onArtifactGenerated, onOpenArtifacts, arti
     )
 
     if (isReport && text.length > 300) {
-      // Determine artifact type
       let type: Artifact['type'] = 'generic'
       let title = 'Generated Report'
       if (text.includes('Access Review')) {
@@ -84,7 +75,6 @@ export function ChatPanel({ demoMode, onArtifactGenerated, onOpenArtifacts, arti
         title = 'Onboarding & Provisioning Plan'
       }
 
-      // Extract tool traces from message parts
       const toolTraces = lastMsg.parts
         ?.filter((p) => p.type === 'tool-invocation')
         .map((p) => {
@@ -122,7 +112,7 @@ export function ChatPanel({ demoMode, onArtifactGenerated, onOpenArtifacts, arti
     setInput('')
   }, [sendMessage, isLoading])
 
-  const handleDemoSelect = useCallback((prompt: string) => {
+  const handleSuggestionSelect = useCallback((prompt: string) => {
     sendMessage({ text: prompt })
   }, [sendMessage])
 
@@ -148,10 +138,10 @@ export function ChatPanel({ demoMode, onArtifactGenerated, onOpenArtifacts, arti
       {/* Messages */}
       <div className="flex-1 overflow-y-auto" ref={scrollRef}>
         <div className="max-w-3xl mx-auto px-4 py-4">
-          {!hasMessages && demoMode && (
-            <DemoPrompts onSelect={handleDemoSelect} visible={!hasMessages} />
+          {!hasMessages && mcpConnected && (
+            <DemoPrompts onSelect={handleSuggestionSelect} visible={!hasMessages} />
           )}
-          {!hasMessages && !demoMode && (
+          {!hasMessages && !mcpConnected && (
             <div className="flex flex-col items-center justify-center py-24 text-center">
               <div className="flex items-center justify-center h-14 w-14 rounded-2xl bg-primary/10 mb-4">
                 <svg className="h-7 w-7 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -162,8 +152,7 @@ export function ChatPanel({ demoMode, onArtifactGenerated, onOpenArtifacts, arti
               </div>
               <h2 className="text-lg font-semibold text-foreground mb-1">Saviynt MCP Agent</h2>
               <p className="text-sm text-muted-foreground max-w-sm text-pretty">
-                Ask questions about identity security, access reviews, SoD compliance, or provisioning.
-                Enable Demo Mode for curated scenarios.
+                Connect to an MCP server to get started. Click <strong className="text-foreground">Connect MCP</strong> in the top bar and paste your MCP configuration JSON.
               </p>
             </div>
           )}
@@ -192,10 +181,10 @@ export function ChatPanel({ demoMode, onArtifactGenerated, onOpenArtifacts, arti
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask about identities, access reviews, SoD conflicts..."
+                placeholder={mcpConnected ? 'Ask about identities, access reviews, SoD conflicts...' : 'Connect to MCP first...'}
                 className="w-full resize-none rounded-xl border border-border bg-card text-foreground placeholder:text-muted-foreground px-4 py-3 pr-12 text-sm focus:outline-none focus:ring-1 focus:ring-primary transition-colors min-h-[44px] max-h-[160px]"
                 rows={1}
-                disabled={isLoading}
+                disabled={isLoading || !mcpConnected}
               />
             </div>
             <div className="flex items-center gap-1.5 pb-0.5">
@@ -224,7 +213,7 @@ export function ChatPanel({ demoMode, onArtifactGenerated, onOpenArtifacts, arti
                 <Button
                   size="icon"
                   onClick={() => handleSubmit(input)}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() || !mcpConnected}
                   className="h-9 w-9 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-30"
                   aria-label="Send message"
                 >
@@ -234,7 +223,7 @@ export function ChatPanel({ demoMode, onArtifactGenerated, onOpenArtifacts, arti
             </div>
           </div>
           <p className="text-[10px] text-muted-foreground text-center mt-2">
-            Agent responses are based on MCP tool outputs. Sensitive data is redacted by default.
+            Agent responses are based on real MCP tool outputs. Sensitive data is redacted by default.
           </p>
         </div>
       </div>

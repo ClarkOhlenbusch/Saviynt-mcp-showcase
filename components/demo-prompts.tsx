@@ -1,7 +1,6 @@
 'use client'
 
-import React from "react"
-
+import React from 'react'
 import { Shield, AlertTriangle, UserPlus } from 'lucide-react'
 import { DEMO_PROMPTS } from '@/lib/agent/prompts'
 import { cn } from '@/lib/utils'
@@ -25,7 +24,7 @@ export function DemoPrompts({ onSelect, visible }: DemoPromptsProps) {
       <div className="text-center">
         <h2 className="text-lg font-semibold text-foreground mb-1 text-balance">Identity Security Agent</h2>
         <p className="text-sm text-muted-foreground max-w-md text-pretty">
-          Choose a curated demo scenario or type your own question below.
+          Try one of these scenarios or type your own question below.
         </p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-2xl">

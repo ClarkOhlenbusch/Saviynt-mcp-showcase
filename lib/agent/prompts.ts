@@ -41,7 +41,6 @@ Always structure your output with these sections:
 ## Tool Calling Guidelines
 
 - Call tools to gather real data before making any assertions about identities, access, or risk.
-- When data is from a demo environment, clearly note: "Evidence limited to available demo environment data."
 - Always provide tool call references in your responses so users can trace the evidence.
 - Summarize large result sets rather than dumping raw data.
 
@@ -51,18 +50,6 @@ Always structure your output with these sections:
 - Use markdown formatting for structured outputs.
 - Highlight critical findings prominently.
 - Always end reports with a clear "Next Steps" or "Recommendations" section.
-`
-
-export const DEMO_CONTEXT = `
-## Demo Environment Context
-
-This demo connects to a Saviynt MCP instance managing a fictional organization "Acme Corp" with:
-- ~3,500 employees across Finance, Sales, Engineering, and HR departments
-- Key applications: SAP ERP, Oracle Financials, Salesforce CRM, Workday HCM
-- Active SoD policies covering financial operations
-- Quarterly access review campaigns
-
-The data returned from MCP tools represents this environment. When producing reports, reference this context for completeness.
 `
 
 export const DEMO_PROMPTS = [

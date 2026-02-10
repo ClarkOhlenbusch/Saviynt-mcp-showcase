@@ -1,13 +1,13 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Settings, Zap, ZapOff, FileText, Plus } from 'lucide-react'
+import { useState, useCallback } from 'react'
+import { Settings, Zap, ZapOff, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { StatusBar } from '@/components/status-bar'
 import { ChatPanel } from '@/components/chat-panel'
 import { SettingsModal } from '@/components/settings-modal'
 import { ArtifactPanel } from '@/components/artifact-panel'
+import { McpConfigDialog } from '@/components/mcp-config-dialog'
 import type { McpConnectionStatus, McpToolSchema, Artifact } from '@/lib/mcp/types'
 
 export default function Page() {
@@ -22,7 +22,7 @@ export default function Page() {
   const [refreshingTools, setRefreshingTools] = useState(false)
 
   // UI state
-  const [demoMode, setDemoMode] = useState(true)
+  const [configDialogOpen, setConfigDialogOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
@@ -31,15 +31,14 @@ export default function Page() {
   const [redactionEnabled, setRedactionEnabled] = useState(true)
   const [destructiveActionsEnabled, setDestructiveActionsEnabled] = useState(false)
 
-  // Auto-connect on mount
-  useEffect(() => {
-    handleConnect()
-  }, [])
-
-  async function handleConnect() {
+  async function handleConnect(serverUrl: string, authHeader: string) {
     setConnecting(true)
     try {
-      const res = await fetch('/api/mcp/connect', { method: 'POST' })
+      const res = await fetch('/api/mcp/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverUrl, authHeader }),
+      })
       const status: McpConnectionStatus = await res.json()
       setMcpStatus(status)
 
@@ -47,6 +46,7 @@ export default function Page() {
         const toolsRes = await fetch('/api/mcp/tools')
         const data = await toolsRes.json()
         setTools(data.tools || [])
+        setConfigDialogOpen(false)
       }
     } catch {
       setMcpStatus((prev) => ({ ...prev, connected: false, error: 'Connection failed' }))
@@ -71,7 +71,6 @@ export default function Page() {
 
   const handleArtifactGenerated = useCallback((artifact: Artifact) => {
     setArtifacts((prev) => {
-      // Avoid duplicates based on title within a short window
       const recent = prev.find(
         (a) => a.title === artifact.title && artifact.createdAt - a.createdAt < 5000
       )
@@ -100,42 +99,33 @@ export default function Page() {
               mcpConnected={mcpStatus.connected}
               mcpToolCount={tools.length}
               llmProvider="Claude Sonnet"
-              demoMode={demoMode}
             />
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* MCP Connect button */}
-          {!mcpStatus.connected && (
+          {/* MCP Connect / Disconnect */}
+          {!mcpStatus.connected ? (
             <Button
               variant="outline"
               size="sm"
-              onClick={handleConnect}
-              disabled={connecting}
+              onClick={() => setConfigDialogOpen(true)}
               className="h-7 text-xs gap-1.5 border-border text-muted-foreground hover:text-foreground bg-transparent"
             >
-              {connecting ? (
-                <div className="h-3 w-3 border border-muted-foreground border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <Zap className="h-3 w-3" />
-              )}
+              <Zap className="h-3 w-3" />
               Connect MCP
             </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setConfigDialogOpen(true)}
+              className="h-7 text-xs gap-1.5 border-accent/30 text-accent hover:text-accent bg-transparent"
+            >
+              <Zap className="h-3 w-3" />
+              Connected
+            </Button>
           )}
-
-          {/* Demo Mode toggle */}
-          <div className="flex items-center gap-1.5">
-            <label htmlFor="demo-toggle" className="text-xs text-muted-foreground cursor-pointer hidden sm:inline">
-              Demo
-            </label>
-            <Switch
-              id="demo-toggle"
-              checked={demoMode}
-              onCheckedChange={setDemoMode}
-              className="scale-75 origin-right"
-            />
-          </div>
 
           {/* Artifacts button */}
           <Button
@@ -151,18 +141,6 @@ export default function Page() {
                 {artifacts.length}
               </span>
             )}
-          </Button>
-
-          {/* Add MCP stub */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground hidden sm:flex"
-            title="Add another MCP server (coming soon)"
-            disabled
-          >
-            <Plus className="h-3 w-3" />
-            Add MCP
           </Button>
 
           {/* Settings */}
@@ -184,7 +162,6 @@ export default function Page() {
           mcpConnected={mcpStatus.connected}
           mcpToolCount={tools.length}
           llmProvider="Claude Sonnet"
-          demoMode={demoMode}
         />
       </div>
 
@@ -192,13 +169,11 @@ export default function Page() {
       {mcpStatus.error && !mcpStatus.connected && (
         <div className="px-4 py-2 bg-destructive/10 border-b border-destructive/20 flex items-center gap-2">
           <ZapOff className="h-3.5 w-3.5 text-destructive shrink-0" />
-          <p className="text-xs text-destructive">
-            {mcpStatus.error}. The app will use demo data for showcasing.
-          </p>
+          <p className="text-xs text-destructive">{mcpStatus.error}</p>
           <Button
             variant="ghost"
             size="sm"
-            onClick={handleConnect}
+            onClick={() => setConfigDialogOpen(true)}
             className="h-6 text-[10px] text-destructive hover:text-destructive ml-auto shrink-0"
           >
             Retry
@@ -209,12 +184,20 @@ export default function Page() {
       {/* Main content */}
       <main className="flex-1 overflow-hidden">
         <ChatPanel
-          demoMode={demoMode}
+          mcpConnected={mcpStatus.connected}
           onArtifactGenerated={handleArtifactGenerated}
           onOpenArtifacts={() => setArtifactsOpen(true)}
           artifactCount={artifacts.length}
         />
       </main>
+
+      {/* MCP Config Dialog */}
+      <McpConfigDialog
+        open={configDialogOpen}
+        onOpenChange={setConfigDialogOpen}
+        onConnect={handleConnect}
+        connecting={connecting}
+      />
 
       {/* Settings Modal */}
       <SettingsModal
@@ -222,7 +205,6 @@ export default function Page() {
         onOpenChange={setSettingsOpen}
         mcpConnected={mcpStatus.connected}
         mcpServerUrl={mcpStatus.serverUrl}
-        authPresent={!mcpStatus.error?.includes('AUTH_HEADER')}
         tools={tools}
         redactionEnabled={redactionEnabled}
         onRedactionChange={setRedactionEnabled}

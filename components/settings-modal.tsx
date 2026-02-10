@@ -19,7 +19,6 @@ interface SettingsModalProps {
   onOpenChange: (open: boolean) => void
   mcpConnected: boolean
   mcpServerUrl: string
-  authPresent: boolean
   tools: McpToolSchema[]
   redactionEnabled: boolean
   onRedactionChange: (enabled: boolean) => void
@@ -34,7 +33,6 @@ export function SettingsModal({
   onOpenChange,
   mcpConnected,
   mcpServerUrl,
-  authPresent,
   tools,
   redactionEnabled,
   onRedactionChange,
@@ -49,7 +47,7 @@ export function SettingsModal({
         <DialogHeader>
           <DialogTitle className="text-foreground">Settings</DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            Configure MCP connection and security policies.
+            MCP connection and security policies.
           </DialogDescription>
         </DialogHeader>
 
@@ -62,17 +60,16 @@ export function SettingsModal({
           <div className="rounded-lg bg-secondary/50 p-3 flex flex-col gap-2 text-sm">
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Server URL</span>
-              <span className="font-mono text-xs text-foreground truncate max-w-[200px]">{mcpServerUrl || 'Not configured'}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">Auth Header</span>
-              <Badge variant={authPresent ? 'secondary' : 'destructive'} className={authPresent ? 'bg-accent/10 text-accent border-0' : ''}>
-                {authPresent ? 'Present' : 'Missing'}
-              </Badge>
+              <span className="font-mono text-xs text-foreground truncate max-w-[220px]">
+                {mcpServerUrl || 'Not connected'}
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Status</span>
-              <Badge variant={mcpConnected ? 'secondary' : 'destructive'} className={mcpConnected ? 'bg-accent/10 text-accent border-0' : ''}>
+              <Badge
+                variant={mcpConnected ? 'secondary' : 'destructive'}
+                className={mcpConnected ? 'bg-accent/10 text-accent border-0' : ''}
+              >
                 {mcpConnected ? 'Connected' : 'Disconnected'}
               </Badge>
             </div>
@@ -92,7 +89,7 @@ export function SettingsModal({
               variant="ghost"
               size="sm"
               onClick={onRefreshTools}
-              disabled={refreshing}
+              disabled={refreshing || !mcpConnected}
               className="h-7 text-xs text-muted-foreground hover:text-foreground"
             >
               <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? 'animate-spin' : ''}`} />
@@ -102,7 +99,11 @@ export function SettingsModal({
           {tools.length > 0 ? (
             <div className="grid grid-cols-2 gap-1 max-h-32 overflow-y-auto">
               {tools.map((t) => (
-                <div key={t.name} className="text-xs font-mono text-muted-foreground bg-secondary/30 rounded px-2 py-1 truncate" title={t.description}>
+                <div
+                  key={t.name}
+                  className="text-xs font-mono text-muted-foreground bg-secondary/30 rounded px-2 py-1 truncate"
+                  title={t.description}
+                >
                   {t.name}
                 </div>
               ))}
