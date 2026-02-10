@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@layer base {
+  :root {
+    --background: 220 20% 7%;
+    --foreground: 210 20% 92%;
+    --card: 220 18% 10%;
+    --card-foreground: 210 20% 92%;
+    --popover: 220 18% 10%;
+    --popover-foreground: 210 20% 92%;
+    --primary: 199 89% 48%;
+    --primary-foreground: 220 20% 7%;
+    --secondary: 220 14% 16%;
+    --secondary-foreground: 210 20% 85%;
+    --muted: 220 14% 14%;
+    --muted-foreground: 215 14% 55%;
+    --accent: 165 70% 42%;
+    --accent-foreground: 220 20% 7%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 20% 92%;
+    --border: 220 13% 18%;
+    --input: 220 13% 18%;
+    --ring: 199 89% 48%;
+    --chart-1: 199 89% 48%;
+    --chart-2: 165 70% 42%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+    --radius: 0.5rem;
+    --sidebar-background: 220 18% 10%;
+    --sidebar-foreground: 210 20% 92%;
+    --sidebar-primary: 199 89% 48%;
+    --sidebar-primary-foreground: 220 20% 7%;
+    --sidebar-accent: 220 14% 16%;
+    --sidebar-accent-foreground: 210 20% 92%;
+    --sidebar-border: 220 13% 18%;
+    --sidebar-ring: 199 89% 48%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(220 13% 22%);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(220 13% 30%);
+}
+
+/* Markdown styles for artifacts */
+.prose-artifact h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.75rem; color: hsl(210 20% 92%); }
+.prose-artifact h2 { font-size: 1.25rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem; color: hsl(199 89% 48%); }
+.prose-artifact h3 { font-size: 1.1rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; color: hsl(210 20% 85%); }
+.prose-artifact p { margin-bottom: 0.5rem; line-height: 1.6; color: hsl(215 14% 75%); }
+.prose-artifact ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 0.5rem; }
+.prose-artifact ol { list-style-type: decimal; padding-left: 1.5rem; margin-bottom: 0.5rem; }
+.prose-artifact li { margin-bottom: 0.25rem; color: hsl(215 14% 75%); line-height: 1.5; }
+.prose-artifact strong { color: hsl(210 20% 92%); font-weight: 600; }
+.prose-artifact hr { border-color: hsl(220 13% 18%); margin: 1rem 0; }
+.prose-artifact code { background: hsl(220 14% 14%); padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.875rem; }
+.prose-artifact pre { background: hsl(220 14% 14%); padding: 1rem; border-radius: 0.5rem; overflow-x: auto; margin-bottom: 1rem; }
+.prose-artifact pre code { background: transparent; padding: 0; }
+.prose-artifact table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+.prose-artifact th { text-align: left; padding: 0.5rem; border-bottom: 1px solid hsl(220 13% 18%); font-weight: 600; color: hsl(210 20% 92%); }
+.prose-artifact td { padding: 0.5rem; border-bottom: 1px solid hsl(220 13% 22%); color: hsl(215 14% 75%); }

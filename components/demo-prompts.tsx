@@ -1,0 +1,55 @@
+'use client'
+
+import React from "react"
+
+import { Shield, AlertTriangle, UserPlus } from 'lucide-react'
+import { DEMO_PROMPTS } from '@/lib/agent/prompts'
+import { cn } from '@/lib/utils'
+
+interface DemoPromptsProps {
+  onSelect: (prompt: string) => void
+  visible: boolean
+}
+
+const iconMap: Record<string, React.ReactNode> = {
+  'shield': <Shield className="h-5 w-5" />,
+  'alert-triangle': <AlertTriangle className="h-5 w-5" />,
+  'user-plus': <UserPlus className="h-5 w-5" />,
+}
+
+export function DemoPrompts({ onSelect, visible }: DemoPromptsProps) {
+  if (!visible) return null
+
+  return (
+    <div className="flex flex-col items-center gap-6 py-8">
+      <div className="text-center">
+        <h2 className="text-lg font-semibold text-foreground mb-1 text-balance">Identity Security Agent</h2>
+        <p className="text-sm text-muted-foreground max-w-md text-pretty">
+          Choose a curated demo scenario or type your own question below.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-2xl">
+        {DEMO_PROMPTS.map((dp) => (
+          <button
+            key={dp.id}
+            type="button"
+            onClick={() => onSelect(dp.prompt)}
+            className={cn(
+              'flex flex-col items-start gap-3 p-4 rounded-xl border border-border',
+              'bg-card/50 hover:bg-card hover:border-primary/30 transition-all',
+              'text-left group cursor-pointer'
+            )}
+          >
+            <div className="flex items-center justify-center h-10 w-10 rounded-lg bg-primary/10 text-primary group-hover:bg-primary/20 transition-colors">
+              {iconMap[dp.icon]}
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-foreground">{dp.title}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{dp.subtitle}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
