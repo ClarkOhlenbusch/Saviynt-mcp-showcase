@@ -13,8 +13,6 @@ import { QuickStartGuideDialog } from '@/components/quick-start-guide-dialog'
 import { McpConfigDialog, MCP_CONFIG_STORAGE_KEY, parseMcpConfig } from '@/components/mcp-config-dialog'
 import type { McpConnectionStatus, McpToolSchema, Artifact } from '@/lib/mcp/types'
 
-const QUICK_START_GUIDE_STORAGE_KEY = 'quick_start_guide_seen_v1'
-
 export default function Page() {
   // MCP state
   const [mcpStatus, setMcpStatus] = useState<McpConnectionStatus>({
@@ -50,14 +48,6 @@ export default function Page() {
     }
   }, [])
 
-  // Auto-open quick-start guide once per browser
-  useEffect(() => {
-    const seenGuide = localStorage.getItem(QUICK_START_GUIDE_STORAGE_KEY)
-    if (!seenGuide) {
-      setGuideOpen(true)
-    }
-  }, [])
-
   // Auto-reconnect MCP from cached config on mount
   useEffect(() => {
     const saved = localStorage.getItem(MCP_CONFIG_STORAGE_KEY)
@@ -73,13 +63,6 @@ export default function Page() {
     setApiKey(key)
     localStorage.setItem('gemini_api_key', key)
   }
-
-  const handleGuideOpenChange = useCallback((open: boolean) => {
-    setGuideOpen(open)
-    if (!open) {
-      localStorage.setItem(QUICK_START_GUIDE_STORAGE_KEY, '1')
-    }
-  }, [])
 
   async function handleConnect(serverUrl: string, authHeader: string) {
     setConnecting(true)
@@ -314,7 +297,7 @@ export default function Page() {
       {/* Quick Start Guide */}
       <QuickStartGuideDialog
         open={guideOpen}
-        onOpenChange={handleGuideOpenChange}
+        onOpenChange={setGuideOpen}
         onOpenApiKey={() => setApiKeyDialogOpen(true)}
         onOpenMcpConfig={() => setConfigDialogOpen(true)}
         onOpenFaq={() => setFaqOpen(true)}
