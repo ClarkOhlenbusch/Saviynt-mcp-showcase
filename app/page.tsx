@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Settings, Zap, ZapOff, FileText, Key, HelpCircle, Github } from 'lucide-react'
+import { Settings, Zap, ZapOff, FileText, Key, HelpCircle, Github, BookOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBar } from '@/components/status-bar'
 import { ChatPanel } from '@/components/chat-panel'
@@ -9,8 +9,11 @@ import { SettingsModal } from '@/components/settings-modal'
 import { ApiKeyDialog } from '@/components/api-key-dialog'
 import { ArtifactPanel } from '@/components/artifact-panel'
 import { FAQDialog } from '@/components/faq-dialog'
+import { QuickStartGuideDialog } from '@/components/quick-start-guide-dialog'
 import { McpConfigDialog, MCP_CONFIG_STORAGE_KEY, parseMcpConfig } from '@/components/mcp-config-dialog'
 import type { McpConnectionStatus, McpToolSchema, Artifact } from '@/lib/mcp/types'
+
+const QUICK_START_GUIDE_STORAGE_KEY = 'quick_start_guide_seen_v1'
 
 export default function Page() {
   // MCP state
@@ -26,6 +29,7 @@ export default function Page() {
   // UI state
   const [configDialogOpen, setConfigDialogOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [guideOpen, setGuideOpen] = useState(false)
   const [faqOpen, setFaqOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
   const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
@@ -46,6 +50,14 @@ export default function Page() {
     }
   }, [])
 
+  // Auto-open quick-start guide once per browser
+  useEffect(() => {
+    const seenGuide = localStorage.getItem(QUICK_START_GUIDE_STORAGE_KEY)
+    if (!seenGuide) {
+      setGuideOpen(true)
+    }
+  }, [])
+
   // Auto-reconnect MCP from cached config on mount
   useEffect(() => {
     const saved = localStorage.getItem(MCP_CONFIG_STORAGE_KEY)
@@ -61,6 +73,13 @@ export default function Page() {
     setApiKey(key)
     localStorage.setItem('gemini_api_key', key)
   }
+
+  const handleGuideOpenChange = useCallback((open: boolean) => {
+    setGuideOpen(open)
+    if (!open) {
+      localStorage.setItem(QUICK_START_GUIDE_STORAGE_KEY, '1')
+    }
+  }, [])
 
   async function handleConnect(serverUrl: string, authHeader: string) {
     setConnecting(true)
@@ -135,6 +154,17 @@ export default function Page() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Quick Start Guide Button */}
+          <Button
+            variant="default"
+            size="sm"
+            onClick={() => setGuideOpen(true)}
+            className="h-7 px-2 sm:px-2.5 text-xs gap-1.5"
+          >
+            <BookOpen className="h-3 w-3" />
+            <span className="hidden sm:inline">Start Here</span>
+          </Button>
+
           {/* FAQ Button */}
           <Button
             variant="outline"
@@ -261,6 +291,7 @@ export default function Page() {
           artifactCount={artifacts.length}
           apiKey={apiKey}
           onOpenFaq={() => setFaqOpen(true)}
+          onOpenStartHere={() => setGuideOpen(true)}
         />
       </main>
 
@@ -278,6 +309,17 @@ export default function Page() {
         onOpenChange={setApiKeyDialogOpen}
         apiKey={apiKey}
         onApiKeyChange={handleApiKeyChange}
+      />
+
+      {/* Quick Start Guide */}
+      <QuickStartGuideDialog
+        open={guideOpen}
+        onOpenChange={handleGuideOpenChange}
+        onOpenApiKey={() => setApiKeyDialogOpen(true)}
+        onOpenMcpConfig={() => setConfigDialogOpen(true)}
+        onOpenFaq={() => setFaqOpen(true)}
+        apiKeySet={Boolean(apiKey)}
+        mcpConnected={mcpStatus.connected}
       />
 
       {/* FAQ Dialog */}

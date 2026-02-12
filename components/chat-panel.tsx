@@ -4,7 +4,7 @@ import React from 'react'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
-import { Send, Square, FileText, Loader2, AlertTriangle } from 'lucide-react'
+import { Send, Square, FileText, Loader2, AlertTriangle, BookOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ChatMessage } from './chat-message'
 import { DemoPrompts } from './demo-prompts'
@@ -18,6 +18,7 @@ interface ChatPanelProps {
   artifactCount: number
   apiKey: string
   onOpenFaq: () => void
+  onOpenStartHere: () => void
 }
 
 const USAGE_LIMIT_PATTERNS = [
@@ -166,6 +167,7 @@ export function ChatPanel({
   artifactCount,
   apiKey,
   onOpenFaq,
+  onOpenStartHere,
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -293,10 +295,18 @@ export function ChatPanel({
                   <path d="M2 12l10 5 10-5" />
                 </svg>
               </div>
-              <h2 className="text-lg font-semibold text-foreground mb-1">Saviynt MCP Agent</h2>
+              <h2 className="text-lg font-semibold text-foreground mb-1">Start Here</h2>
               <p className="text-sm text-muted-foreground max-w-sm text-pretty">
-                Connect to an MCP server to get started. Click <strong className="text-foreground">Connect MCP</strong> in the top bar and paste your MCP configuration JSON.
+                Open the setup guide and follow each step to add your API key and connect MCP.
               </p>
+              <Button
+                size="lg"
+                onClick={onOpenStartHere}
+                className="mt-5 h-11 px-8 text-sm font-semibold"
+              >
+                <BookOpen className="h-4 w-4 mr-2" />
+                Open Start Here Guide
+              </Button>
             </div>
           )}
           {messages.map((message, idx) => (
