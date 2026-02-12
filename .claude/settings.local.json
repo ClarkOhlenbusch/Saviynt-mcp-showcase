@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx next build:*)"
+      "Bash(npx next build:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx next dev --port 3099)",
+      "WebFetch(domain:localhost)",
+      "Bash(curl:*)",
+      "Bash(findstr:*)",
+      "Bash(netstat:*)"
     ]
   }
 }

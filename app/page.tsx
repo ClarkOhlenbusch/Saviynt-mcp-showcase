@@ -1,13 +1,14 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Settings, Zap, ZapOff, FileText, Key } from 'lucide-react'
+import { Settings, Zap, ZapOff, FileText, Key, HelpCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBar } from '@/components/status-bar'
 import { ChatPanel } from '@/components/chat-panel'
 import { SettingsModal } from '@/components/settings-modal'
 import { ApiKeyDialog } from '@/components/api-key-dialog'
 import { ArtifactPanel } from '@/components/artifact-panel'
+import { FAQDialog } from '@/components/faq-dialog'
 import { McpConfigDialog, MCP_CONFIG_STORAGE_KEY, parseMcpConfig } from '@/components/mcp-config-dialog'
 import type { McpConnectionStatus, McpToolSchema, Artifact } from '@/lib/mcp/types'
 
@@ -25,6 +26,7 @@ export default function Page() {
   // UI state
   const [configDialogOpen, setConfigDialogOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [faqOpen, setFaqOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
   const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
@@ -133,6 +135,17 @@ export default function Page() {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* FAQ Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setFaqOpen(true)}
+            className="h-7 text-xs gap-1.5 border-border text-muted-foreground hover:text-foreground bg-transparent"
+          >
+            <HelpCircle className="h-3 w-3" />
+            FAQ
+          </Button>
+
           {/* API Key Button */}
           <Button
             variant="outline"
@@ -229,6 +242,7 @@ export default function Page() {
           onOpenArtifacts={() => setArtifactsOpen(true)}
           artifactCount={artifacts.length}
           apiKey={apiKey}
+          onOpenFaq={() => setFaqOpen(true)}
         />
       </main>
 
@@ -246,6 +260,12 @@ export default function Page() {
         onOpenChange={setApiKeyDialogOpen}
         apiKey={apiKey}
         onApiKeyChange={handleApiKeyChange}
+      />
+
+      {/* FAQ Dialog */}
+      <FAQDialog
+        open={faqOpen}
+        onOpenChange={setFaqOpen}
       />
 
       {/* Settings Modal */}

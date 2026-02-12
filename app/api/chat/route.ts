@@ -76,16 +76,49 @@ export async function POST(req: Request) {
     apiKey: effectiveApiKey,
   })
 
-  const result = streamText({
-    model: modelProvider('gemini-3-flash-preview'),
+  try {
+    const result = streamText({
+      model: modelProvider('gemini-3-flash-preview'),
+      system: systemPrompt,
+      messages: await convertToModelMessages(messages),
+      tools: aiTools,
+      stopWhen: stepCountIs(5),
+      providerOptions: {
+        google: {
+          thinkingConfig: { includeThoughts: true, thinkingLevel: 'low' },
+        },
+      },
+    })
 
-    system: systemPrompt,
-    messages: await convertToModelMessages(messages),
-    tools: aiTools,
-    stopWhen: stepCountIs(5),
-  })
+    return result.toUIMessageStreamResponse()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to generate response'
+    const isUsageLimit = isUsageLimitError(message)
 
-  return result.toUIMessageStreamResponse()
+    return new Response(
+      JSON.stringify({
+        error: isUsageLimit
+          ? 'Google API usage limit reached. Open FAQ for quota steps and key rotation guidance.'
+          : message,
+      }),
+      {
+        status: isUsageLimit ? 429 : 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    )
+  }
+}
+
+function isUsageLimitError(message: string): boolean {
+  const normalized = message.toLowerCase()
+  return (
+    normalized.includes('quota') ||
+    normalized.includes('rate limit') ||
+    normalized.includes('too many requests') ||
+    normalized.includes('resource_exhausted') ||
+    normalized.includes('limit exceeded') ||
+    normalized.includes('429')
+  )
 }
 
 // Convert MCP JSON schema to zod schema

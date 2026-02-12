@@ -71,9 +71,9 @@
 }
 
 /* Markdown styles for artifacts */
-.prose-artifact h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.75rem; color: hsl(210 20% 92%); }
-.prose-artifact h2 { font-size: 1.25rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem; color: hsl(199 89% 48%); }
-.prose-artifact h3 { font-size: 1.1rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; color: hsl(210 20% 85%); }
+.prose-artifact h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.75rem; color: hsl(199 89% 48%); }
+.prose-artifact h2 { font-size: 1.25rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem; color: hsl(199 89% 52%); }
+.prose-artifact h3 { font-size: 1.1rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; color: hsl(199 74% 62%); }
 .prose-artifact p { margin-bottom: 0.5rem; line-height: 1.6; color: hsl(215 14% 75%); }
 .prose-artifact ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 0.5rem; }
 .prose-artifact ol { list-style-type: decimal; padding-left: 1.5rem; margin-bottom: 0.5rem; }

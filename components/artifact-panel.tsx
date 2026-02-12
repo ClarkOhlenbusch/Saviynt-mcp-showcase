@@ -8,7 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import type { Artifact } from '@/lib/mcp/types'
 import { artifactToMarkdown, artifactToEvidenceJson } from '@/lib/artifacts'
-import ReactMarkdown from 'react-markdown'
+import { MarkdownContent } from './markdown-content'
 
 interface ArtifactPanelProps {
   artifacts: Artifact[]
@@ -138,7 +138,7 @@ export function ArtifactPanel({ artifacts, open, onOpenChange }: ArtifactPanelPr
           </div>
           <ScrollArea className="flex-1">
             <div className="p-4 prose-artifact text-sm">
-              <ReactMarkdown>{artifactToMarkdown(selected)}</ReactMarkdown>
+              <MarkdownContent content={artifactToMarkdown(selected)} />
             </div>
           </ScrollArea>
         </>

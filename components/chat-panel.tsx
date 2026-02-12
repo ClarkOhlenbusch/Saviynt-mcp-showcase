@@ -4,10 +4,11 @@ import React from 'react'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
-import { Send, Square, FileText, Loader2 } from 'lucide-react'
+import { Send, Square, FileText, Loader2, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ChatMessage } from './chat-message'
 import { DemoPrompts } from './demo-prompts'
+import { cn } from '@/lib/utils'
 import type { Artifact } from '@/lib/mcp/types'
 
 interface ChatPanelProps {
@@ -16,180 +17,53 @@ interface ChatPanelProps {
   onOpenArtifacts: () => void
   artifactCount: number
   apiKey: string
+  onOpenFaq: () => void
 }
 
-const THINKING_PHRASES = [
-  'Establishing connection... ',
-  'Connecting to Saviynt... ',
-  'Discovering security tools...',
-  'Planning approach...',
-  'Analyzing request...',
-  'Processing metadata...',
-  'Preparing data scan...',
+const USAGE_LIMIT_PATTERNS = [
+  /quota/i,
+  /rate limit/i,
+  /too many requests/i,
+  /resource_exhausted/i,
+  /limit exceeded/i,
+  /\b429\b/i,
 ]
 
-const TOOL_PHRASES: Record<string, string[]> = {
-  'get_users': [
-    'Scanning user directory...',
-    'Retrieving identity profiles...',
-    'Checking account status...',
-    'Loading user attributes...',
-  ],
-  'get_complete_access_path': [
-    'Tracing permission lineage...',
-    'Analyzing role hierarchy...',
-    'Mapping entitlement paths...',
-    'Verifying access inheritance...',
-    'Checking separation of duties...',
-    'Reviewing access certification history...',
-  ],
-  'get_identity': [
-    'Locating identity record...',
-    'Retrieving profile details...',
-    'Checking lifecycle state...',
-    'Loading manager relationships...',
-    'Analyzing birthright entitlements...',
-  ],
-  'run_access_review': [
-    'Initiating certification campaign...',
-    'Identifying reviewers...',
-    'Generating review items...',
-    'Calculating progress metrics...',
-    'Evaluating risk factors...',
-  ],
-  'check_sod_violation': [
-    'Analyzing conflicting permissions...',
-    'Checking rule matrix...',
-    'Identifying toxic combinations...',
-    'Validating control effectiveness...',
-    'Reviewing mitigation logs...',
-  ],
-  'get_roles': [
-    'Fetching role definitions...',
-    'Analyzing role membership...',
-    'Checking role owners...',
-    'Mapping role entitlements...',
-  ],
-  'get_entitlements': [
-    'Retrieving entitlement catalog...',
-    'Checking entitlement owners...',
-    'Analyzing access risk levels...',
-  ],
-  'run_search': [
-    'Executing global query...',
-    'Filtering results...',
-    'Indexing findings...',
-  ],
-  'default': [
-    'Executing operation...',
-    'Communicating with Saviynt server...',
-    'Processing security request...',
-    'Validating inputs...',
-  ]
-}
+function parseChatErrorMessage(error: Error | undefined): string {
+  if (!error) return ''
+  const rawMessage = (error.message || String(error)).trim()
+  if (!rawMessage) return 'The request failed. Please try again.'
 
-function formatToolName(name: string): string {
-  return name
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/[_-]/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
-}
-
-function getToolDetails(args: any): string {
-  if (!args || typeof args !== 'object') return ''
-
-  // Lists of keys to prioritize for display
-  const priorityKeys = ['query', 'path', 'file', 'url', 'command', 'name', 'key']
-
-  for (const key of priorityKeys) {
-    if (key in args && typeof args[key] === 'string') {
-      const val = args[key]
-      if (val.length > 30) return `: "${val.slice(0, 30)}..."`
-      return `: "${val}"`
+  const jsonStart = rawMessage.indexOf('{')
+  const jsonEnd = rawMessage.lastIndexOf('}')
+  if (jsonStart >= 0 && jsonEnd > jsonStart) {
+    try {
+      const parsed = JSON.parse(rawMessage.slice(jsonStart, jsonEnd + 1)) as {
+        error?: string
+        message?: string
+      }
+      if (typeof parsed.error === 'string' && parsed.error.trim()) return parsed.error
+      if (typeof parsed.message === 'string' && parsed.message.trim()) return parsed.message
+    } catch {
+      // Fallback to raw message.
     }
   }
 
-  // Fallback to first string value
-  const values = Object.values(args)
-  const firstString = values.find(v => typeof v === 'string') as string | undefined
-  if (firstString) {
-    if (firstString.length > 20) return ` "${firstString.slice(0, 20)}..."`
-    return ` "${firstString}"`
-  }
-
-  return ''
+  return rawMessage
 }
 
-const FALLBACK_PHRASES = [
-  'Analyzing security context...',
-  'Preparing response brief...',
-  'Formatting results...',
-  'Reviewing collected data...',
-]
-
-function getStreamingStatus(messages: any[], index: number): string | null {
-  if (messages.length === 0) return null
-  const last = messages[messages.length - 1]
-  if (last.role !== 'assistant') return null
-
-  const parts = last.parts || []
-  const toolInvocations = last.toolInvocations || []
-
-  // Normalize all tool invocations from various possible AI SDK structures
-  const allTools = [
-    ...toolInvocations,
-    ...(parts.filter((p: any) => p.type === 'tool-invocation' || p.type === 'tool-call').map((p: any) => p.toolInvocation || p))
-  ].filter(ti => ti && (ti.toolName || ti.name))
-
-  const total = allTools.length
-  const completed = allTools.filter((ti: any) =>
-    ti.state === 'result' ||
-    ti.state === 'output-available' ||
-    ti.state === 'output-error' ||
-    ti.result ||
-    ti.output
-  ).length
-
-  // Find the most recent in-progress tool
-  const activeTool = [...allTools].reverse().find((ti: any) =>
-    ti.state === 'call' || ti.state === 'partial-call' || ti.state === 'input-streaming' || !ti.result
-  )
-
-  if (activeTool) {
-    const rawName = activeTool.toolName || activeTool.name || ''
-    const name = formatToolName(rawName)
-    const details = getToolDetails(activeTool.args) || getToolDetails(activeTool.input)
-
-    // Get rotating phrase
-    const phrases = TOOL_PHRASES[rawName] || TOOL_PHRASES['default']
-    const phrase = phrases[index % phrases.length]
-
-    if (total > 1) {
-      return `[${name.toUpperCase()}] ${phrase}${details} (${completed}/${total})`
-    }
-    return `[${name.toUpperCase()}] ${phrase}${details}`
-  }
-
-  // If no tools are currently running but some were called, we are summarizing or synthesizing
-  if (total > 0 && completed === total) {
-    const lastTool = allTools[allTools.length - 1]
-    const name = formatToolName(lastTool?.toolName || lastTool?.name || '').toUpperCase()
-
-    if (total > 1) {
-      return `SYNTHESIZING security insights from ${total} sources...`
-    }
-    return `FINALIZING analysis for ${name}...`
-  }
-
-  // Fallback while waiting for specific parts
-  const lastPart = parts[parts.length - 1]
-  if (lastPart?.type === 'reasoning') return 'Reasoning...'
-  if (lastPart?.type === 'text' && lastPart.text) return null // Model is writing final answer
-
-  return FALLBACK_PHRASES[index % FALLBACK_PHRASES.length]
+function isUsageLimitError(message: string): boolean {
+  return USAGE_LIMIT_PATTERNS.some((pattern) => pattern.test(message))
 }
 
-export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, artifactCount, apiKey }: ChatPanelProps) {
+export function ChatPanel({
+  mcpConnected,
+  onArtifactGenerated,
+  onOpenArtifacts,
+  artifactCount,
+  apiKey,
+  onOpenFaq,
+}: ChatPanelProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -199,7 +73,7 @@ export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, 
   const apiKeyRef = useRef(apiKey)
   useEffect(() => { apiKeyRef.current = apiKey }, [apiKey])
 
-  const { messages, sendMessage, status, stop } = useChat({
+  const { messages, sendMessage, status, stop, error, clearError } = useChat({
     transport: React.useMemo(() => new DefaultChatTransport({
       api: '/api/chat',
       body: () => ({ apiKey: apiKeyRef.current }),
@@ -209,16 +83,8 @@ export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, 
   const isStreaming = status === 'streaming'
   const isSubmitted = status === 'submitted'
   const isLoading = isStreaming || isSubmitted
-
-  // Rotate through thinking/status phrases
-  const [loadingPhaseIndex, setLoadingPhaseIndex] = useState(0)
-  useEffect(() => {
-    if (!isLoading) { setLoadingPhaseIndex(0); return }
-    const interval = setInterval(() => {
-      setLoadingPhaseIndex((i) => i + 1)
-    }, 2500)
-    return () => clearInterval(interval)
-  }, [isLoading])
+  const chatErrorMessage = parseChatErrorMessage(error)
+  const usageLimitExceeded = isUsageLimitError(chatErrorMessage)
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -263,22 +129,21 @@ export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, 
       }
 
       const toolTraces = lastMsg.parts
-        ?.filter((p) => p.type === 'tool-invocation')
+        ?.filter((p) => p.type.startsWith('tool-') || p.type === 'dynamic-tool')
         .map((p) => {
-          const toolPart = p as any
-          const toolInvocation = toolPart.toolInvocation
-          if (!toolInvocation) return null
+          const tp = p as any
+          const toolName = tp.type === 'dynamic-tool' ? tp.toolName : tp.type.split('-').slice(1).join('-')
 
           return {
-            id: toolInvocation.toolCallId,
-            toolName: toolInvocation.toolName,
-            args: toolInvocation.args,
-            argsRedacted: toolInvocation.args,
-            responsePreview: toolInvocation.state === 'output-available'
-              ? JSON.stringify(toolInvocation.output)?.slice(0, 300) || ''
+            id: tp.toolCallId,
+            toolName,
+            args: tp.input,
+            argsRedacted: tp.input,
+            responsePreview: tp.state === 'output-available'
+              ? JSON.stringify(tp.output)?.slice(0, 300) || ''
               : '',
             duration: 0,
-            success: toolInvocation.state === 'output-available',
+            success: tp.state === 'output-available',
             timestamp: Date.now(),
           }
         }).filter(Boolean) || []
@@ -298,13 +163,15 @@ export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, 
 
   const handleSubmit = useCallback((text: string) => {
     if (!text.trim() || isLoading) return
+    clearError()
     sendMessage({ text: text.trim() })
     setInput('')
-  }, [sendMessage, isLoading])
+  }, [sendMessage, isLoading, clearError])
 
   const handleSuggestionSelect = useCallback((prompt: string) => {
+    clearError()
     sendMessage({ text: prompt })
-  }, [sendMessage])
+  }, [sendMessage, clearError])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -322,6 +189,10 @@ export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, 
   }, [input])
 
   const hasMessages = messages.length > 0
+
+  // Determine if the last message is currently being streamed
+  const lastMessage = messages[messages.length - 1]
+  const isLastMessageStreaming = isStreaming && lastMessage?.role === 'assistant'
 
   return (
     <div className="flex flex-col h-full">
@@ -346,19 +217,19 @@ export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, 
               </p>
             </div>
           )}
-          {messages.map((message) => (
-            <ChatMessage key={message.id} message={message} />
+          {messages.map((message, idx) => (
+            <ChatMessage
+              key={message.id}
+              message={message}
+              isStreaming={isLastMessageStreaming && idx === messages.length - 1}
+            />
           ))}
-          {(isSubmitted || (isStreaming && getStreamingStatus(messages, loadingPhaseIndex) !== null)) && (
+          {isSubmitted && (
             <div className="flex items-center gap-2 py-4">
               <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-primary/10">
                 <Loader2 className="h-4 w-4 text-primary animate-spin" />
               </div>
-              <span className="text-sm text-muted-foreground">
-                {isSubmitted
-                  ? THINKING_PHRASES[loadingPhaseIndex % THINKING_PHRASES.length]
-                  : getStreamingStatus(messages, loadingPhaseIndex)}
-              </span>
+              <span className="text-sm text-muted-foreground">Connecting...</span>
             </div>
           )}
           <div ref={bottomRef} />
@@ -368,6 +239,58 @@ export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, 
       {/* Input */}
       <div className="border-t border-border bg-background/80 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-4 py-3">
+          {chatErrorMessage && (
+            <div className={cn(
+              'mb-3 rounded-lg border p-3',
+              usageLimitExceeded
+                ? 'border-destructive/40 bg-destructive/[0.06]'
+                : 'border-amber-500/40 bg-amber-500/[0.08]'
+            )}>
+              <div className="flex items-start gap-2">
+                <AlertTriangle className={cn(
+                  'mt-0.5 h-4 w-4 shrink-0',
+                  usageLimitExceeded ? 'text-destructive' : 'text-amber-500'
+                )} />
+                <div className="min-w-0 flex-1">
+                  <p className={cn(
+                    'text-xs font-semibold',
+                    usageLimitExceeded ? 'text-destructive' : 'text-amber-600'
+                  )}>
+                    {usageLimitExceeded ? 'Usage Limit Reached' : 'Request Failed'}
+                  </p>
+                  <p className={cn(
+                    'mt-1 text-xs',
+                    usageLimitExceeded ? 'text-destructive/90' : 'text-amber-700'
+                  )}>
+                    {usageLimitExceeded
+                      ? 'This API key hit a rate limit or usage quota. Open FAQ for limits and next-step fixes.'
+                      : chatErrorMessage}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {usageLimitExceeded && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={onOpenFaq}
+                      className="h-7 border-destructive/40 bg-transparent px-2.5 text-[10px] text-destructive hover:text-destructive"
+                    >
+                      Open FAQ
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearError}
+                    className="h-7 px-2 text-[10px] text-muted-foreground hover:text-foreground"
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex items-end gap-2">
             <div className="flex-1 relative">
               <textarea
