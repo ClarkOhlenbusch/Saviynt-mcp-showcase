@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Settings, Zap, ZapOff, FileText, Key, HelpCircle } from 'lucide-react'
+import { Settings, Zap, ZapOff, FileText, Key, HelpCircle, Github } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBar } from '@/components/status-bar'
 import { ChatPanel } from '@/components/chat-panel'
@@ -194,6 +194,24 @@ export default function Page() {
                 {artifacts.length}
               </span>
             )}
+          </Button>
+
+          {/* GitHub repo link */}
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+          >
+            <a
+              href="https://github.com/ClarkOhlenbusch/Saviynt-mcp-showcase"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Open GitHub repository"
+              title="GitHub repository"
+            >
+              <Github className="h-4 w-4" />
+            </a>
           </Button>
 
           {/* Settings */}
