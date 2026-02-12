@@ -29,6 +29,39 @@ const USAGE_LIMIT_PATTERNS = [
   /\b429\b/i,
 ]
 
+const MIN_SIGNIFICANT_DELIVERABLE_LENGTH = 320
+
+const DELIVERABLE_KEYWORD_PATTERNS = [
+  /\baccess review brief\b/i,
+  /\bsod conflict/i,
+  /\bseparation of duties\b/i,
+  /\bonboarding (?:and )?provisioning plan\b/i,
+  /\bprovisioning plan\b/i,
+]
+
+const DELIVERABLE_SECTION_PATTERNS = [
+  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?executive summary(?:\*\*)?\b/i,
+  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?scope(?:\*\*)?\b/i,
+  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?methodology(?:\*\*)?\b/i,
+  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?findings(?:\*\*)?\b/i,
+  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?recommendations(?:\*\*)?\b/i,
+  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?conflicts identified(?:\*\*)?\b/i,
+  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?remediation plan(?:\*\*)?\b/i,
+  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?baseline access bundle(?:\*\*)?\b/i,
+  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?approvals required(?:\*\*)?\b/i,
+]
+
+type MessagePart = {
+  type: string
+  [key: string]: unknown
+}
+
+type ArtifactCandidate = {
+  type: Artifact['type']
+  title: string
+  markdown: string
+}
+
 function parseChatErrorMessage(error: Error | undefined): string {
   if (!error) return ''
   const rawMessage = (error.message || String(error)).trim()
@@ -56,6 +89,76 @@ function isUsageLimitError(message: string): boolean {
   return USAGE_LIMIT_PATTERNS.some((pattern) => pattern.test(message))
 }
 
+function extractAssistantText(parts: MessagePart[] | undefined): string {
+  if (!Array.isArray(parts) || parts.length === 0) return ''
+  return parts
+    .filter((part): part is MessagePart & { type: 'text'; text: string } =>
+      part.type === 'text' && typeof part.text === 'string'
+    )
+    .map((part) => part.text.trimEnd())
+    .filter((text) => text.length > 0)
+    .join('\n\n')
+    .trim()
+}
+
+function toPreview(value: unknown, maxLength = 300): string {
+  if (value == null) return ''
+  if (typeof value === 'string') return value.slice(0, maxLength)
+  try {
+    return JSON.stringify(value).slice(0, maxLength)
+  } catch {
+    return String(value).slice(0, maxLength)
+  }
+}
+
+function inferArtifactType(text: string): Artifact['type'] {
+  if (/sod|separation of duties/i.test(text)) return 'sod-analysis'
+  if (/onboarding|provisioning/i.test(text)) return 'onboarding-plan'
+  if (/access review/i.test(text)) return 'access-review'
+  return 'generic'
+}
+
+function inferArtifactTitle(text: string, type: Artifact['type']): string {
+  const titleLine = text.match(/(?:^|\n)\s{0,3}#{1,2}\s+(.+?)\s*(?=\n|$)/i)?.[1]?.trim()
+  if (
+    titleLine &&
+    !/^executive summary$/i.test(titleLine) &&
+    !/^findings$/i.test(titleLine) &&
+    !/^scope$/i.test(titleLine)
+  ) {
+    return titleLine
+  }
+
+  if (type === 'access-review') return 'Access Review Brief'
+  if (type === 'sod-analysis') return 'SoD Conflict Analysis'
+  if (type === 'onboarding-plan') return 'Onboarding & Provisioning Plan'
+  return 'Generated Report'
+}
+
+function assessArtifactCandidate(text: string): ArtifactCandidate | null {
+  const normalized = text.trim()
+  if (normalized.length < MIN_SIGNIFICANT_DELIVERABLE_LENGTH) return null
+
+  const hasKeyword = DELIVERABLE_KEYWORD_PATTERNS.some((pattern) => pattern.test(normalized))
+  const sectionMatches = DELIVERABLE_SECTION_PATTERNS.reduce(
+    (count, pattern) => count + (pattern.test(normalized) ? 1 : 0),
+    0
+  )
+  const hasTable = /\n\|.+\|/.test(normalized) && /\n\|[:\-\s|]+\|/.test(normalized)
+
+  const significanceScore = (hasKeyword ? 2 : 0) + Math.min(sectionMatches, 4) + (hasTable ? 1 : 0)
+  if (significanceScore < 3 && !(hasKeyword && normalized.length >= 500)) return null
+
+  const type = inferArtifactType(normalized)
+  const title = inferArtifactTitle(normalized, type)
+
+  return {
+    type,
+    title,
+    markdown: normalized,
+  }
+}
+
 export function ChatPanel({
   mcpConnected,
   onArtifactGenerated,
@@ -68,6 +171,7 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const artifactMessageIdsRef = useRef(new Set<string>())
 
   // Use a ref so the transport body function always reads the latest key
   const apiKeyRef = useRef(apiKey)
@@ -96,69 +200,47 @@ export function ChatPanel({
     if (status !== 'ready' || messages.length === 0) return
     const lastMsg = messages[messages.length - 1]
     if (lastMsg.role !== 'assistant') return
+    if (artifactMessageIdsRef.current.has(lastMsg.id)) return
 
-    const text = lastMsg.parts
-      ?.filter((p) => p.type === 'text')
-      .map((p) => (p as { type: 'text'; text: string }).text)
-      .join('') || ''
+    const text = extractAssistantText(lastMsg.parts as MessagePart[] | undefined)
+    const candidate = assessArtifactCandidate(text)
+    if (!candidate) return
 
-    // Detect report-like content
-    const isReport = (
-      text.includes('## Executive Summary') ||
-      text.includes('## Findings') ||
-      text.includes('## Scope') ||
-      text.includes('## Recommendations') ||
-      text.includes('Access Review Brief') ||
-      text.includes('SoD Conflict') ||
-      text.includes('Onboarding Plan') ||
-      text.includes('Provisioning Plan')
-    )
+    const toolTraces = lastMsg.parts
+      ?.filter((p) => p.type.startsWith('tool-') || p.type === 'dynamic-tool')
+      .map((p) => {
+        const tp = p as any
+        const toolName = tp.type === 'dynamic-tool' ? tp.toolName : tp.type.split('-').slice(1).join('-')
 
-    if (isReport && text.length > 300) {
-      let type: Artifact['type'] = 'generic'
-      let title = 'Generated Report'
-      if (text.includes('Access Review')) {
-        type = 'access-review'
-        title = 'Access Review Brief'
-      } else if (text.includes('SoD') || text.includes('Separation of Duties')) {
-        type = 'sod-analysis'
-        title = 'SoD Conflict Analysis'
-      } else if (text.includes('Onboarding') || text.includes('Provisioning')) {
-        type = 'onboarding-plan'
-        title = 'Onboarding & Provisioning Plan'
-      }
+        return {
+          id: tp.toolCallId,
+          toolName,
+          args: tp.input,
+          argsRedacted: tp.input,
+          responsePreview:
+            tp.state === 'output-available'
+              ? toPreview(tp.output)
+              : tp.state === 'output-error'
+                ? toPreview(tp.errorText)
+                : '',
+          duration: typeof tp.duration === 'number' ? tp.duration : 0,
+          success: tp.state === 'output-available',
+          timestamp: Date.now(),
+        }
+      })
+      .filter(Boolean) || []
 
-      const toolTraces = lastMsg.parts
-        ?.filter((p) => p.type.startsWith('tool-') || p.type === 'dynamic-tool')
-        .map((p) => {
-          const tp = p as any
-          const toolName = tp.type === 'dynamic-tool' ? tp.toolName : tp.type.split('-').slice(1).join('-')
-
-          return {
-            id: tp.toolCallId,
-            toolName,
-            args: tp.input,
-            argsRedacted: tp.input,
-            responsePreview: tp.state === 'output-available'
-              ? JSON.stringify(tp.output)?.slice(0, 300) || ''
-              : '',
-            duration: 0,
-            success: tp.state === 'output-available',
-            timestamp: Date.now(),
-          }
-        }).filter(Boolean) || []
-
-      const artifact: Artifact = {
-        id: `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        title,
-        type,
-        markdown: text,
-        evidenceJson: toolTraces as Artifact['evidenceJson'],
-        createdAt: Date.now(),
-      }
-
-      onArtifactGenerated(artifact)
+    const artifact: Artifact = {
+      id: `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title: candidate.title,
+      type: candidate.type,
+      markdown: candidate.markdown,
+      evidenceJson: toolTraces as Artifact['evidenceJson'],
+      createdAt: Date.now(),
     }
+
+    onArtifactGenerated(artifact)
+    artifactMessageIdsRef.current.add(lastMsg.id)
   }, [status, messages, onArtifactGenerated])
 
   const handleSubmit = useCallback((text: string) => {
