@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Settings, Zap, ZapOff, FileText, Key, HelpCircle, Github, BookOpen } from 'lucide-react'
+import { Settings, Zap, ZapOff, FileText, Key, HelpCircle, Github, BookOpen, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBar } from '@/components/status-bar'
 import { ChatPanel } from '@/components/chat-panel'
@@ -32,6 +32,7 @@ export default function Page() {
   const [artifactsOpen, setArtifactsOpen] = useState(false)
   const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
+  const [chatSessionKey, setChatSessionKey] = useState(0)
 
   // Security settings
   const [redactionEnabled, setRedactionEnabled] = useState(true)
@@ -112,6 +113,11 @@ export default function Page() {
     })
   }, [])
 
+  const handleNewChat = useCallback(() => {
+    setChatSessionKey((prev) => prev + 1)
+    setArtifacts([])
+  }, [])
+
   return (
     <div className="flex flex-col h-screen bg-background">
       {/* Top bar */}
@@ -137,6 +143,16 @@ export default function Page() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleNewChat}
+            className="h-7 text-xs gap-1.5 border-border text-muted-foreground hover:text-foreground bg-transparent"
+          >
+            <Plus className="h-3 w-3" />
+            New Chat
+          </Button>
+
           {/* Quick Start Guide Button */}
           <Button
             variant="default"
@@ -268,6 +284,7 @@ export default function Page() {
       {/* Main content */}
       <main className="flex-1 overflow-hidden">
         <ChatPanel
+          key={chatSessionKey}
           mcpConnected={mcpStatus.connected}
           onArtifactGenerated={handleArtifactGenerated}
           onOpenArtifacts={() => setArtifactsOpen(true)}

@@ -74,7 +74,6 @@ export function QuickStartGuideDialog({
                     size="sm"
                     className="h-7 gap-1.5 bg-transparent text-xs"
                     onClick={() => {
-                      onOpenChange(false)
                       onOpenApiKey()
                     }}
                   >
@@ -111,7 +110,6 @@ export function QuickStartGuideDialog({
                     size="sm"
                     className="h-7 gap-1.5 bg-transparent text-xs"
                     onClick={() => {
-                      onOpenChange(false)
                       onOpenMcpConfig()
                     }}
                   >
@@ -165,7 +163,6 @@ export function QuickStartGuideDialog({
                 size="sm"
                 className="h-7 gap-1.5 bg-transparent text-xs"
                 onClick={() => {
-                  onOpenChange(false)
                   onOpenFaq()
                 }}
               >
