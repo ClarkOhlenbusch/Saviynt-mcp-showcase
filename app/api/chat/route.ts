@@ -1,5 +1,4 @@
 import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai'
-import { google } from '@ai-sdk/google'
 import { z } from 'zod'
 import { SYSTEM_PROMPT } from '@/lib/agent/prompts'
 import { callTool, getCachedTools, getCachedConfig, checkAndAutoConnect } from '@/lib/mcp/client'
@@ -7,6 +6,8 @@ import { getDefaultGatewayConfig, validateToolCall } from '@/lib/mcp/tool-gatewa
 import { redactDeep } from '@/lib/redaction'
 
 export const maxDuration = 300
+const MAX_TOOL_STEPS = 12
+const MAX_OUTPUT_TOKENS = 4096
 
 export async function POST(req: Request) {
   const { messages, apiKey } = await req.json()
@@ -82,7 +83,8 @@ export async function POST(req: Request) {
       system: systemPrompt,
       messages: await convertToModelMessages(messages),
       tools: aiTools,
-      stopWhen: stepCountIs(5),
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      stopWhen: stepCountIs(MAX_TOOL_STEPS),
       providerOptions: {
         google: {
           thinkingConfig: { includeThoughts: true, thinkingLevel: 'low' },
@@ -90,7 +92,13 @@ export async function POST(req: Request) {
       },
     })
 
-    return result.toUIMessageStreamResponse()
+    return result.toUIMessageStreamResponse({
+      headers: {
+        'Content-Encoding': 'none',
+        'Cache-Control': 'no-cache, no-transform',
+        'X-Accel-Buffering': 'no',
+      },
+    })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to generate response'
     const isUsageLimit = isUsageLimitError(message)

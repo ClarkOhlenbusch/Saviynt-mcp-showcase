@@ -123,7 +123,11 @@ function parsePipeTable(rawText: string): ParsedTable | null {
   const delimiter = splitTableRow(tableLines[1])
   if (headers.length === 0 || !isDelimiterRow(delimiter, headers.length)) return null
 
-  const rowLines = tableLines.slice(2).filter((line) => line.startsWith('|'))
+  const bodyLines = tableLines.slice(2)
+  // If non-table lines follow, skip custom parsing so we don't drop trailing content.
+  if (bodyLines.some((line) => !line.startsWith('|'))) return null
+
+  const rowLines = bodyLines
   if (rowLines.length === 0) return null
 
   const rows = rowLines.map((line) => normalizeRow(splitTableRow(line), headers.length))
