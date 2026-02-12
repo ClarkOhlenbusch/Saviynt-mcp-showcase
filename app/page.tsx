@@ -8,7 +8,7 @@ import { ChatPanel } from '@/components/chat-panel'
 import { SettingsModal } from '@/components/settings-modal'
 import { ApiKeyDialog } from '@/components/api-key-dialog'
 import { ArtifactPanel } from '@/components/artifact-panel'
-import { McpConfigDialog } from '@/components/mcp-config-dialog'
+import { McpConfigDialog, MCP_CONFIG_STORAGE_KEY, parseMcpConfig } from '@/components/mcp-config-dialog'
 import type { McpConnectionStatus, McpToolSchema, Artifact } from '@/lib/mcp/types'
 
 export default function Page() {
@@ -36,24 +36,23 @@ export default function Page() {
   // API Key state
   const [apiKey, setApiKey] = useState('')
 
-  // Load API key from local storage and DB on mount
+  // Load API key from local storage on mount
   useEffect(() => {
     const savedKey = localStorage.getItem('gemini_api_key')
     if (savedKey) {
       setApiKey(savedKey)
     }
+  }, [])
 
-    // Try to fetch newest key from DB if none in localStorage
-    fetch('/api/keys')
-      .then(res => res.json())
-      .then(data => {
-        if (data.keys && data.keys.length > 0 && !savedKey) {
-          const newestKey = data.keys[0].key_value
-          setApiKey(newestKey)
-          localStorage.setItem('gemini_api_key', newestKey)
-        }
-      })
-      .catch(err => console.error('Failed to fetch keys from DB', err))
+  // Auto-reconnect MCP from cached config on mount
+  useEffect(() => {
+    const saved = localStorage.getItem(MCP_CONFIG_STORAGE_KEY)
+    if (!saved) return
+    const result = parseMcpConfig(saved)
+    if (result) {
+      handleConnect(result.serverUrl, result.authHeader)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleApiKeyChange = (key: string) => {

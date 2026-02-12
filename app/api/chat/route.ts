@@ -6,10 +6,19 @@ import { callTool, getCachedTools, getCachedConfig, checkAndAutoConnect } from '
 import { getDefaultGatewayConfig, validateToolCall } from '@/lib/mcp/tool-gateway'
 import { redactDeep } from '@/lib/redaction'
 
-export const maxDuration = 60
+export const maxDuration = 300
 
 export async function POST(req: Request) {
   const { messages, apiKey } = await req.json()
+
+  if (!apiKey) {
+    return new Response(JSON.stringify({ error: 'Gemini API key is required (BYOK)' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  const effectiveApiKey = apiKey
 
   // Ensure MCP is connected before gathering tools
   await checkAndAutoConnect()
@@ -62,13 +71,10 @@ export async function POST(req: Request) {
   }
 
   // Initialize model provider
-  let modelProvider = google
-  if (apiKey) {
-    const { createGoogleGenerativeAI } = await import('@ai-sdk/google')
-    modelProvider = createGoogleGenerativeAI({
-      apiKey: apiKey,
-    })
-  }
+  const { createGoogleGenerativeAI } = await import('@ai-sdk/google')
+  const modelProvider = createGoogleGenerativeAI({
+    apiKey: effectiveApiKey,
+  })
 
   const result = streamText({
     model: modelProvider('gemini-3-flash-preview'),

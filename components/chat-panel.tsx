@@ -18,22 +18,207 @@ interface ChatPanelProps {
   apiKey: string
 }
 
+const THINKING_PHRASES = [
+  'Establishing connection... ',
+  'Connecting to Saviynt... ',
+  'Discovering security tools...',
+  'Planning approach...',
+  'Analyzing request...',
+  'Processing metadata...',
+  'Preparing data scan...',
+]
+
+const TOOL_PHRASES: Record<string, string[]> = {
+  'get_users': [
+    'Scanning user directory...',
+    'Retrieving identity profiles...',
+    'Checking account status...',
+    'Loading user attributes...',
+  ],
+  'get_complete_access_path': [
+    'Tracing permission lineage...',
+    'Analyzing role hierarchy...',
+    'Mapping entitlement paths...',
+    'Verifying access inheritance...',
+    'Checking separation of duties...',
+    'Reviewing access certification history...',
+  ],
+  'get_identity': [
+    'Locating identity record...',
+    'Retrieving profile details...',
+    'Checking lifecycle state...',
+    'Loading manager relationships...',
+    'Analyzing birthright entitlements...',
+  ],
+  'run_access_review': [
+    'Initiating certification campaign...',
+    'Identifying reviewers...',
+    'Generating review items...',
+    'Calculating progress metrics...',
+    'Evaluating risk factors...',
+  ],
+  'check_sod_violation': [
+    'Analyzing conflicting permissions...',
+    'Checking rule matrix...',
+    'Identifying toxic combinations...',
+    'Validating control effectiveness...',
+    'Reviewing mitigation logs...',
+  ],
+  'get_roles': [
+    'Fetching role definitions...',
+    'Analyzing role membership...',
+    'Checking role owners...',
+    'Mapping role entitlements...',
+  ],
+  'get_entitlements': [
+    'Retrieving entitlement catalog...',
+    'Checking entitlement owners...',
+    'Analyzing access risk levels...',
+  ],
+  'run_search': [
+    'Executing global query...',
+    'Filtering results...',
+    'Indexing findings...',
+  ],
+  'default': [
+    'Executing operation...',
+    'Communicating with Saviynt server...',
+    'Processing security request...',
+    'Validating inputs...',
+  ]
+}
+
+function formatToolName(name: string): string {
+  return name
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+function getToolDetails(args: any): string {
+  if (!args || typeof args !== 'object') return ''
+
+  // Lists of keys to prioritize for display
+  const priorityKeys = ['query', 'path', 'file', 'url', 'command', 'name', 'key']
+
+  for (const key of priorityKeys) {
+    if (key in args && typeof args[key] === 'string') {
+      const val = args[key]
+      if (val.length > 30) return `: "${val.slice(0, 30)}..."`
+      return `: "${val}"`
+    }
+  }
+
+  // Fallback to first string value
+  const values = Object.values(args)
+  const firstString = values.find(v => typeof v === 'string') as string | undefined
+  if (firstString) {
+    if (firstString.length > 20) return ` "${firstString.slice(0, 20)}..."`
+    return ` "${firstString}"`
+  }
+
+  return ''
+}
+
+const FALLBACK_PHRASES = [
+  'Analyzing security context...',
+  'Preparing response brief...',
+  'Formatting results...',
+  'Reviewing collected data...',
+]
+
+function getStreamingStatus(messages: any[], index: number): string | null {
+  if (messages.length === 0) return null
+  const last = messages[messages.length - 1]
+  if (last.role !== 'assistant') return null
+
+  const parts = last.parts || []
+  const toolInvocations = last.toolInvocations || []
+
+  // Normalize all tool invocations from various possible AI SDK structures
+  const allTools = [
+    ...toolInvocations,
+    ...(parts.filter((p: any) => p.type === 'tool-invocation' || p.type === 'tool-call').map((p: any) => p.toolInvocation || p))
+  ].filter(ti => ti && (ti.toolName || ti.name))
+
+  const total = allTools.length
+  const completed = allTools.filter((ti: any) =>
+    ti.state === 'result' ||
+    ti.state === 'output-available' ||
+    ti.state === 'output-error' ||
+    ti.result ||
+    ti.output
+  ).length
+
+  // Find the most recent in-progress tool
+  const activeTool = [...allTools].reverse().find((ti: any) =>
+    ti.state === 'call' || ti.state === 'partial-call' || ti.state === 'input-streaming' || !ti.result
+  )
+
+  if (activeTool) {
+    const rawName = activeTool.toolName || activeTool.name || ''
+    const name = formatToolName(rawName)
+    const details = getToolDetails(activeTool.args) || getToolDetails(activeTool.input)
+
+    // Get rotating phrase
+    const phrases = TOOL_PHRASES[rawName] || TOOL_PHRASES['default']
+    const phrase = phrases[index % phrases.length]
+
+    if (total > 1) {
+      return `[${name.toUpperCase()}] ${phrase}${details} (${completed}/${total})`
+    }
+    return `[${name.toUpperCase()}] ${phrase}${details}`
+  }
+
+  // If no tools are currently running but some were called, we are summarizing or synthesizing
+  if (total > 0 && completed === total) {
+    const lastTool = allTools[allTools.length - 1]
+    const name = formatToolName(lastTool?.toolName || lastTool?.name || '').toUpperCase()
+
+    if (total > 1) {
+      return `SYNTHESIZING security insights from ${total} sources...`
+    }
+    return `FINALIZING analysis for ${name}...`
+  }
+
+  // Fallback while waiting for specific parts
+  const lastPart = parts[parts.length - 1]
+  if (lastPart?.type === 'reasoning') return 'Reasoning...'
+  if (lastPart?.type === 'text' && lastPart.text) return null // Model is writing final answer
+
+  return FALLBACK_PHRASES[index % FALLBACK_PHRASES.length]
+}
+
 export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, artifactCount, apiKey }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
+  // Use a ref so the transport body function always reads the latest key
+  const apiKeyRef = useRef(apiKey)
+  useEffect(() => { apiKeyRef.current = apiKey }, [apiKey])
+
   const { messages, sendMessage, status, stop } = useChat({
-    transport: new DefaultChatTransport({
+    transport: React.useMemo(() => new DefaultChatTransport({
       api: '/api/chat',
-      body: { apiKey },
-    }),
+      body: () => ({ apiKey: apiKeyRef.current }),
+    }), []),
   })
 
   const isStreaming = status === 'streaming'
   const isSubmitted = status === 'submitted'
   const isLoading = isStreaming || isSubmitted
+
+  // Rotate through thinking/status phrases
+  const [loadingPhaseIndex, setLoadingPhaseIndex] = useState(0)
+  useEffect(() => {
+    if (!isLoading) { setLoadingPhaseIndex(0); return }
+    const interval = setInterval(() => {
+      setLoadingPhaseIndex((i) => i + 1)
+    }, 2500)
+    return () => clearInterval(interval)
+  }, [isLoading])
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -80,17 +265,20 @@ export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, 
       const toolTraces = lastMsg.parts
         ?.filter((p) => p.type === 'tool-invocation')
         .map((p) => {
-          const toolPart = p as { type: 'tool-invocation'; toolInvocation: { toolCallId: string; toolName: string; args: Record<string, unknown>; state: string; output?: unknown } }
+          const toolPart = p as any
+          const toolInvocation = toolPart.toolInvocation
+          if (!toolInvocation) return null
+
           return {
-            id: toolPart.toolInvocation.toolCallId,
-            toolName: toolPart.toolInvocation.toolName,
-            args: toolPart.toolInvocation.args,
-            argsRedacted: toolPart.toolInvocation.args,
-            responsePreview: toolPart.toolInvocation.state === 'output-available'
-              ? JSON.stringify(toolPart.toolInvocation.output)?.slice(0, 300) || ''
+            id: toolInvocation.toolCallId,
+            toolName: toolInvocation.toolName,
+            args: toolInvocation.args,
+            argsRedacted: toolInvocation.args,
+            responsePreview: toolInvocation.state === 'output-available'
+              ? JSON.stringify(toolInvocation.output)?.slice(0, 300) || ''
               : '',
             duration: 0,
-            success: toolPart.toolInvocation.state === 'output-available',
+            success: toolInvocation.state === 'output-available',
             timestamp: Date.now(),
           }
         }).filter(Boolean) || []
@@ -161,12 +349,16 @@ export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, 
           {messages.map((message) => (
             <ChatMessage key={message.id} message={message} />
           ))}
-          {isSubmitted && (
+          {(isSubmitted || (isStreaming && getStreamingStatus(messages, loadingPhaseIndex) !== null)) && (
             <div className="flex items-center gap-2 py-4">
               <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-primary/10">
                 <Loader2 className="h-4 w-4 text-primary animate-spin" />
               </div>
-              <span className="text-sm text-muted-foreground">Thinking...</span>
+              <span className="text-sm text-muted-foreground">
+                {isSubmitted
+                  ? THINKING_PHRASES[loadingPhaseIndex % THINKING_PHRASES.length]
+                  : getStreamingStatus(messages, loadingPhaseIndex)}
+              </span>
             </div>
           )}
           <div ref={bottomRef} />

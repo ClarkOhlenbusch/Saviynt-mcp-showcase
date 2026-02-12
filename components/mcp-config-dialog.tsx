@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -35,83 +35,83 @@ const PLACEHOLDER = `{
   }
 }`
 
+export const MCP_CONFIG_STORAGE_KEY = 'mcp_config_json'
+
+/** Parse MCP config JSON and return serverUrl + authHeader, or null if invalid. */
+export function parseMcpConfig(configText: string): { serverUrl: string; authHeader: string } | null {
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(configText)
+  } catch {
+    return null
+  }
+
+  const mcpServers = parsed.mcpServers as Record<string, Record<string, unknown>> | undefined
+  if (!mcpServers) return null
+
+  const serverKey = Object.keys(mcpServers)[0]
+  if (!serverKey) return null
+
+  const server = mcpServers[serverKey]
+  const args = server.args as string[] | undefined
+  const env = server.env as Record<string, string> | undefined
+
+  let serverUrl = ''
+  if (args) {
+    for (const arg of args) {
+      if (arg.startsWith('http://') || arg.startsWith('https://')) {
+        serverUrl = arg
+        break
+      }
+    }
+  }
+  if (!serverUrl) return null
+
+  let authHeader = ''
+  if (args) {
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--header' && args[i + 1]) {
+        let headerVal = args[i + 1]
+        if (env) {
+          headerVal = headerVal.replace(/\$\{(\w+)\}/g, (_, varName) => env[varName] || '')
+        }
+        if (headerVal.startsWith('Authorization:')) {
+          authHeader = headerVal.slice('Authorization:'.length)
+        } else {
+          authHeader = headerVal
+        }
+        break
+      }
+    }
+  }
+
+  const baseUrl = serverUrl.replace(/\/sse\/?$/, '')
+  return { serverUrl: baseUrl, authHeader }
+}
+
 export function McpConfigDialog({ open, onOpenChange, onConnect, connecting }: McpConfigDialogProps) {
   const [configText, setConfigText] = useState('')
   const [error, setError] = useState('')
 
+  // Load cached config from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem(MCP_CONFIG_STORAGE_KEY)
+    if (saved) setConfigText(saved)
+  }, [])
+
   function handleConnect() {
     setError('')
 
-    let parsed: Record<string, unknown>
-    try {
-      parsed = JSON.parse(configText)
-    } catch {
-      setError('Invalid JSON. Please paste a valid MCP configuration.')
+    const result = parseMcpConfig(configText)
+    if (!result) {
+      setError('Invalid MCP configuration. Please paste valid JSON with a "mcpServers" key containing a server URL.')
       return
     }
 
-    // Extract server URL and auth from the MCP config format
-    const mcpServers = parsed.mcpServers as Record<string, Record<string, unknown>> | undefined
-    if (!mcpServers) {
-      setError('Missing "mcpServers" key. Expected standard MCP configuration format.')
-      return
-    }
+    // Cache the config JSON so the user doesn't have to re-enter it
+    localStorage.setItem(MCP_CONFIG_STORAGE_KEY, configText)
 
-    // Get the first server entry
-    const serverKey = Object.keys(mcpServers)[0]
-    if (!serverKey) {
-      setError('No server found in "mcpServers".')
-      return
-    }
-
-    const server = mcpServers[serverKey]
-    const args = server.args as string[] | undefined
-    const env = server.env as Record<string, string> | undefined
-
-    // Extract the SSE URL from args -- look for a URL pattern
-    let serverUrl = ''
-    if (args) {
-      for (const arg of args) {
-        if (arg.startsWith('http://') || arg.startsWith('https://')) {
-          serverUrl = arg
-          break
-        }
-      }
-    }
-
-    if (!serverUrl) {
-      setError('Could not find a server URL in the args. Expected an https:// URL.')
-      return
-    }
-
-    // Extract auth header from env + args
-    // Look for --header arg and resolve env vars
-    let authHeader = ''
-    if (args) {
-      for (let i = 0; i < args.length; i++) {
-        if (args[i] === '--header' && args[i + 1]) {
-          let headerVal = args[i + 1]
-          // Resolve ${VAR} references from env
-          if (env) {
-            headerVal = headerVal.replace(/\$\{(\w+)\}/g, (_, varName) => {
-              return env[varName] || ''
-            })
-          }
-          // Parse "Authorization:VALUE" format
-          if (headerVal.startsWith('Authorization:')) {
-            authHeader = headerVal.slice('Authorization:'.length)
-          } else {
-            authHeader = headerVal
-          }
-          break
-        }
-      }
-    }
-
-    // Remove /sse suffix from server URL for HTTP API calls
-    const baseUrl = serverUrl.replace(/\/sse\/?$/, '')
-
-    onConnect(baseUrl, authHeader)
+    onConnect(result.serverUrl, result.authHeader)
   }
 
   return (

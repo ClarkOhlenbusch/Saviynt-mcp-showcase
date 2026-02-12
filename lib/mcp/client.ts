@@ -331,7 +331,7 @@ export async function callTool(toolName: string, args: Record<string, unknown>, 
 
     try {
       console.log(`[MCP] Calling tool: ${toolName} (attempt ${attempt + 1}/${maxRetries + 1})`)
-      const rpcData = await mcpRequest('tools/call', { name: toolName, arguments: args }, 45000)
+      const rpcData = await mcpRequest('tools/call', { name: toolName, arguments: args }, 180000)
 
       if (rpcData.error) {
         throw new Error(rpcData.error.message || 'Tool call error')
@@ -352,7 +352,7 @@ export async function callTool(toolName: string, args: Record<string, unknown>, 
       const errorMsg = err instanceof Error ? err.message : 'Unknown error'
       console.error(`[MCP] Tool ${toolName} attempt ${attempt + 1} failed: ${errorMsg}`)
 
-      // If SSE connection was lost, retry with a new connection
+      // Only retry on connection errors — timeouts mean the server is slow, not broken
       if (errorMsg.includes('SSE connection lost') || errorMsg.includes('not connected')) {
         sseReader = null
         sseMessageEndpoint = null
@@ -361,17 +361,15 @@ export async function callTool(toolName: string, args: Record<string, unknown>, 
         }
       }
 
-      // Final attempt failed or non-retryable error
-      if (attempt >= maxRetries) {
-        return {
-          toolName,
-          args,
-          result: null,
-          duration: Date.now() - startTime,
-          success: false,
-          error: errorMsg,
-          timestamp: Date.now(),
-        }
+      // Non-retryable error (timeout, server error, etc.) or exhausted retries — fail immediately
+      return {
+        toolName,
+        args,
+        result: null,
+        duration: Date.now() - startTime,
+        success: false,
+        error: errorMsg,
+        timestamp: Date.now(),
       }
     }
   }

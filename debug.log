@@ -22,3 +22,9 @@
   "hint": null,
   "message": "new row violates row-level security policy for table \"api_keys\""
 }
+[2026-02-12T15:24:10.098Z] Supabase POST error: {
+  "code": "42501",
+  "details": null,
+  "hint": null,
+  "message": "new row violates row-level security policy for table \"api_keys\""
+}
