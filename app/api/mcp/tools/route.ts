@@ -1,10 +1,11 @@
-import { getCachedTools, discoverTools } from '@/lib/mcp/client'
+import { getCachedTools, discoverTools, checkAndAutoConnect } from '@/lib/mcp/client'
 
 export async function GET(req: Request) {
   const url = new URL(req.url)
   const refresh = url.searchParams.get('refresh')
 
   try {
+    await checkAndAutoConnect()
     const tools = refresh === 'true' ? await discoverTools() : getCachedTools()
     return Response.json({ tools })
   } catch (err) {

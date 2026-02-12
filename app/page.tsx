@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useCallback } from 'react'
-import { Settings, Zap, ZapOff, FileText } from 'lucide-react'
+import { useState, useCallback, useEffect } from 'react'
+import { Settings, Zap, ZapOff, FileText, Key } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBar } from '@/components/status-bar'
 import { ChatPanel } from '@/components/chat-panel'
 import { SettingsModal } from '@/components/settings-modal'
+import { ApiKeyDialog } from '@/components/api-key-dialog'
 import { ArtifactPanel } from '@/components/artifact-panel'
 import { McpConfigDialog } from '@/components/mcp-config-dialog'
 import type { McpConnectionStatus, McpToolSchema, Artifact } from '@/lib/mcp/types'
@@ -25,11 +26,40 @@ export default function Page() {
   const [configDialogOpen, setConfigDialogOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
+  const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
 
   // Security settings
   const [redactionEnabled, setRedactionEnabled] = useState(true)
   const [destructiveActionsEnabled, setDestructiveActionsEnabled] = useState(false)
+
+  // API Key state
+  const [apiKey, setApiKey] = useState('')
+
+  // Load API key from local storage and DB on mount
+  useEffect(() => {
+    const savedKey = localStorage.getItem('gemini_api_key')
+    if (savedKey) {
+      setApiKey(savedKey)
+    }
+
+    // Try to fetch newest key from DB if none in localStorage
+    fetch('/api/keys')
+      .then(res => res.json())
+      .then(data => {
+        if (data.keys && data.keys.length > 0 && !savedKey) {
+          const newestKey = data.keys[0].key_value
+          setApiKey(newestKey)
+          localStorage.setItem('gemini_api_key', newestKey)
+        }
+      })
+      .catch(err => console.error('Failed to fetch keys from DB', err))
+  }, [])
+
+  const handleApiKeyChange = (key: string) => {
+    setApiKey(key)
+    localStorage.setItem('gemini_api_key', key)
+  }
 
   async function handleConnect(serverUrl: string, authHeader: string) {
     setConnecting(true)
@@ -98,12 +128,23 @@ export default function Page() {
             <StatusBar
               mcpConnected={mcpStatus.connected}
               mcpToolCount={tools.length}
-              llmProvider="Claude Sonnet"
+              llmProvider="Gemini"
             />
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* API Key Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setApiKeyDialogOpen(true)}
+            className={`h-7 text-xs gap-1.5 border-border bg-transparent ${apiKey ? 'text-primary border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            <Key className="h-3 w-3" />
+            {apiKey ? 'API Key Set' : 'Add API Key'}
+          </Button>
+
           {/* MCP Connect / Disconnect */}
           {!mcpStatus.connected ? (
             <Button
@@ -188,6 +229,7 @@ export default function Page() {
           onArtifactGenerated={handleArtifactGenerated}
           onOpenArtifacts={() => setArtifactsOpen(true)}
           artifactCount={artifacts.length}
+          apiKey={apiKey}
         />
       </main>
 
@@ -197,6 +239,14 @@ export default function Page() {
         onOpenChange={setConfigDialogOpen}
         onConnect={handleConnect}
         connecting={connecting}
+      />
+
+      {/* API Key Dialog */}
+      <ApiKeyDialog
+        open={apiKeyDialogOpen}
+        onOpenChange={setApiKeyDialogOpen}
+        apiKey={apiKey}
+        onApiKeyChange={handleApiKeyChange}
       />
 
       {/* Settings Modal */}

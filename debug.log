@@ -1,0 +1,24 @@
+[2026-02-11T15:15:32.629Z] Supabase POST error: {
+  "code": "42501",
+  "details": null,
+  "hint": null,
+  "message": "new row violates row-level security policy for table \"api_keys\""
+}
+[2026-02-11T15:17:22.531Z] Supabase POST error: {
+  "code": "42501",
+  "details": null,
+  "hint": null,
+  "message": "new row violates row-level security policy for table \"api_keys\""
+}
+[2026-02-11T15:17:24.444Z] Supabase POST error: {
+  "code": "42501",
+  "details": null,
+  "hint": null,
+  "message": "new row violates row-level security policy for table \"api_keys\""
+}
+[2026-02-11T15:17:31.374Z] Supabase POST error: {
+  "code": "42501",
+  "details": null,
+  "hint": null,
+  "message": "new row violates row-level security policy for table \"api_keys\""
+}

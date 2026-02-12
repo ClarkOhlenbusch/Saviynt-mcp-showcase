@@ -15,9 +15,10 @@ interface ChatPanelProps {
   onArtifactGenerated: (artifact: Artifact) => void
   onOpenArtifacts: () => void
   artifactCount: number
+  apiKey: string
 }
 
-export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, artifactCount }: ChatPanelProps) {
+export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, artifactCount, apiKey }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -26,6 +27,7 @@ export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, 
   const { messages, sendMessage, status, stop } = useChat({
     transport: new DefaultChatTransport({
       api: '/api/chat',
+      body: { apiKey },
     }),
   })
 
@@ -78,17 +80,17 @@ export function ChatPanel({ mcpConnected, onArtifactGenerated, onOpenArtifacts, 
       const toolTraces = lastMsg.parts
         ?.filter((p) => p.type === 'tool-invocation')
         .map((p) => {
-          if (p.type !== 'tool-invocation') return null
+          const toolPart = p as { type: 'tool-invocation'; toolInvocation: { toolCallId: string; toolName: string; args: Record<string, unknown>; state: string; output?: unknown } }
           return {
-            id: p.toolInvocation.toolCallId,
-            toolName: p.toolInvocation.toolName,
-            args: p.toolInvocation.args as Record<string, unknown>,
-            argsRedacted: p.toolInvocation.args as Record<string, unknown>,
-            responsePreview: p.toolInvocation.state === 'output-available'
-              ? JSON.stringify(p.toolInvocation.output)?.slice(0, 300) || ''
+            id: toolPart.toolInvocation.toolCallId,
+            toolName: toolPart.toolInvocation.toolName,
+            args: toolPart.toolInvocation.args,
+            argsRedacted: toolPart.toolInvocation.args,
+            responsePreview: toolPart.toolInvocation.state === 'output-available'
+              ? JSON.stringify(toolPart.toolInvocation.output)?.slice(0, 300) || ''
               : '',
             duration: 0,
-            success: p.toolInvocation.state === 'output-available',
+            success: toolPart.toolInvocation.state === 'output-available',
             timestamp: Date.now(),
           }
         }).filter(Boolean) || []

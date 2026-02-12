@@ -1,14 +1,18 @@
 import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai'
+import { google } from '@ai-sdk/google'
 import { z } from 'zod'
 import { SYSTEM_PROMPT } from '@/lib/agent/prompts'
-import { callTool, getCachedTools, getCachedConfig } from '@/lib/mcp/client'
+import { callTool, getCachedTools, getCachedConfig, checkAndAutoConnect } from '@/lib/mcp/client'
 import { getDefaultGatewayConfig, validateToolCall } from '@/lib/mcp/tool-gateway'
 import { redactDeep } from '@/lib/redaction'
 
 export const maxDuration = 60
 
 export async function POST(req: Request) {
-  const { messages } = await req.json()
+  const { messages, apiKey } = await req.json()
+
+  // Ensure MCP is connected before gathering tools
+  await checkAndAutoConnect()
 
   const mcpTools = getCachedTools()
   const mcpConfig = getCachedConfig()
@@ -28,7 +32,8 @@ export async function POST(req: Request) {
   }
 
   // Dynamically build AI SDK tools from MCP tool schemas
-  const aiTools: Record<string, ReturnType<typeof tool>> = {}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const aiTools: Record<string, any> = {}
 
   for (const mcpTool of mcpTools) {
     const validation = validateToolCall(mcpTool.name, {}, mcpTool, gatewayConfig)
@@ -56,12 +61,22 @@ export async function POST(req: Request) {
     })
   }
 
+  // Initialize model provider
+  let modelProvider = google
+  if (apiKey) {
+    const { createGoogleGenerativeAI } = await import('@ai-sdk/google')
+    modelProvider = createGoogleGenerativeAI({
+      apiKey: apiKey,
+    })
+  }
+
   const result = streamText({
-    model: 'anthropic/claude-sonnet-4-20250514',
+    model: modelProvider('gemini-3-flash-preview'),
+
     system: systemPrompt,
     messages: await convertToModelMessages(messages),
     tools: aiTools,
-    stopWhen: stepCountIs(10),
+    stopWhen: stepCountIs(5),
   })
 
   return result.toUIMessageStreamResponse()
