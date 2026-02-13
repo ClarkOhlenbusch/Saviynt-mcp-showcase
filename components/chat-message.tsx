@@ -12,14 +12,25 @@ interface ChatMessageProps {
   isStreaming?: boolean
 }
 
+type MessagePart = UIMessage['parts'][number]
+type ToolMessagePart = MessagePart & {
+  toolName?: unknown
+  toolCallId?: unknown
+  state?: unknown
+  input?: unknown
+  output?: unknown
+  errorText?: unknown
+  duration?: unknown
+}
+
 /** Check if a part is a tool invocation (static tool-* or dynamic-tool) */
-function isToolPart(part: { type: string }): boolean {
+function isToolPart(part: MessagePart): part is ToolMessagePart {
   return part.type.startsWith('tool-') || part.type === 'dynamic-tool'
 }
 
 /** Extract tool name from a tool part */
-function getToolName(part: any): string {
-  if (part.type === 'dynamic-tool') return part.toolName
+function getToolName(part: ToolMessagePart): string {
+  if (part.type === 'dynamic-tool' && typeof part.toolName === 'string') return part.toolName
   // Static tool: type is 'tool-<name>'
   return part.type.split('-').slice(1).join('-')
 }
@@ -103,7 +114,7 @@ function parseParallelOutputResults(output: unknown): Array<{
   return normalized
 }
 
-function expandToolPart(part: any): Array<{
+function expandToolPart(part: ToolMessagePart): Array<{
   toolCallId?: string
   toolName: string
   args?: Record<string, unknown>
@@ -116,7 +127,7 @@ function expandToolPart(part: any): Array<{
 }> {
   const toolName = getToolName(part)
   const state = typeof part.state === 'string' ? part.state : 'input-available'
-  const toolCallId = part.toolCallId as string | undefined
+  const toolCallId = typeof part.toolCallId === 'string' ? part.toolCallId : undefined
 
   if (toolName !== 'mcp_parallel') {
     const outputObj = toRecord(part.output)
@@ -137,7 +148,7 @@ function expandToolPart(part: any): Array<{
         : state === 'output-error'
           ? part.errorText
           : undefined,
-      duration: part.duration as number | undefined,
+      duration: typeof part.duration === 'number' ? part.duration : undefined,
       requestBytes: undefined,
       rawResponseBytes: rawBytes,
       responseBytes: compactedBytes,
@@ -193,7 +204,7 @@ function expandToolPart(part: any): Array<{
       : state === 'output-error'
         ? part.errorText
         : undefined,
-    duration: part.duration as number | undefined,
+    duration: typeof part.duration === 'number' ? part.duration : undefined,
     requestBytes: undefined,
     rawResponseBytes: undefined,
     responseBytes: undefined,
@@ -257,7 +268,7 @@ function AssistantParts({ parts, isStreaming }: { parts: UIMessage['parts']; isS
   const firstToolIdx = parts.findIndex(isToolPart)
   const groupedToolTraces = parts
     .filter(isToolPart)
-    .flatMap((part) => expandToolPart(part as any))
+    .flatMap((part) => expandToolPart(part))
 
   const stepStartIndices = parts
     .map((part, idx) => (part.type === 'step-start' ? idx : -1))

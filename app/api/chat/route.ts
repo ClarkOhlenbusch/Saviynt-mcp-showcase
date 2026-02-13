@@ -1,5 +1,5 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
-import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai'
+import { streamText, convertToModelMessages, tool, stepCountIs, type ToolSet } from 'ai'
 import { z } from 'zod'
 import { SYSTEM_PROMPT } from '@/lib/agent/prompts'
 import { callTool, getCachedTools, getCachedConfig, checkAndAutoConnect } from '@/lib/mcp/client'
@@ -22,7 +22,10 @@ type ModelInputMessages = Parameters<typeof convertToModelMessages>[0]
 type ModelInputMessage = ModelInputMessages[number]
 
 export async function POST(req: Request) {
-  const { messages, apiKey } = await req.json()
+  const body: unknown = await req.json()
+  const parsedBody = isRecord(body) ? body : {}
+  const messages = parsedBody.messages
+  const apiKey = typeof parsedBody.apiKey === 'string' ? parsedBody.apiKey : ''
 
   if (!apiKey) {
     return new Response(JSON.stringify({ error: 'Gemini API key is required (BYOK)' }), {
@@ -53,8 +56,7 @@ export async function POST(req: Request) {
   }
 
   // Dynamically build AI SDK tools from MCP tool schemas
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const aiTools: Record<string, any> = {}
+  const aiTools: ToolSet = {}
 
   for (const mcpTool of mcpTools) {
     const validation = validateToolCall(mcpTool.name, {}, mcpTool, gatewayConfig)
@@ -66,8 +68,9 @@ export async function POST(req: Request) {
     aiTools[mcpTool.name] = tool({
       description: mcpTool.description || `MCP tool: ${mcpTool.name}`,
       inputSchema,
-      execute: async (args) => {
-        const result = await callTool(mcpTool.name, args as Record<string, unknown>, mcpConfig || undefined)
+      execute: async (args: unknown) => {
+        const toolArgs = isRecord(args) ? args : {}
+        const result = await callTool(mcpTool.name, toolArgs, mcpConfig || undefined)
         if (!result.success) {
           return { error: result.error, toolName: mcpTool.name }
         }
@@ -103,7 +106,11 @@ export async function POST(req: Request) {
           })
         ).min(1).max(MAX_PARALLEL_CALLS),
       }),
-      execute: async function* ({ calls }) {
+      execute: async function* ({
+        calls,
+      }: {
+        calls: Array<{ toolName: string; args: Record<string, unknown> }>
+      }) {
         const validatedCalls: Array<{ toolName: string; args: Record<string, unknown> }> = []
 
         for (const call of calls) {

@@ -89,7 +89,7 @@ function flattenText(node: ReactNode): string | null {
 function parsePipeTable(rawText: string): ParsedTable | null {
   const normalized = rawText.replace(/\r\n/g, '\n').trim()
   if (!normalized.includes('|')) return null
-  if (!/[:\-]{3,}/.test(normalized)) return null
+  if (!/[:-]{3,}/.test(normalized)) return null
 
   let lines = normalized
     .split('\n')

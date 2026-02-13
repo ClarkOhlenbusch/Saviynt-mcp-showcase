@@ -33,11 +33,58 @@ let sseReader: ReadableStreamDefaultReader<Uint8Array> | null = null
 let sseMessageEndpoint: string | null = null
 let connectInFlight: Promise<McpConnectionStatus> | null = null
 
+type PendingRequest = {
+  resolve: (value: Record<string, unknown>) => void
+  reject: (reason: unknown) => void
+}
+
 // Pending request callbacks: requestId -> { resolve, reject }
-const pendingRequests = new Map<string, {
-  resolve: (value: any) => void
-  reject: (reason: any) => void
-}>()
+const pendingRequests = new Map<string, PendingRequest>()
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function getRpcId(value: unknown): string | null {
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return null
+}
+
+function getRpcErrorMessage(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value
+  if (!isRecord(value)) return null
+
+  const message = value.message
+  return typeof message === 'string' && message.trim() ? message : null
+}
+
+function toMcpToolSchema(value: unknown): McpToolSchema | null {
+  if (!isRecord(value)) return null
+  if (typeof value.name !== 'string' || !value.name) return null
+
+  return {
+    name: value.name,
+    description: typeof value.description === 'string' ? value.description : undefined,
+    inputSchema: isRecord(value.inputSchema) ? value.inputSchema : undefined,
+  }
+}
+
+function extractTools(rpcResponse: Record<string, unknown>): McpToolSchema[] {
+  const result = isRecord(rpcResponse.result) ? rpcResponse.result : null
+  const tools = Array.isArray(result?.tools) ? result.tools : []
+  return tools
+    .map((tool) => toMcpToolSchema(tool))
+    .filter((tool): tool is McpToolSchema => tool !== null)
+}
+
+function extractToolCallResult(rpcResponse: Record<string, unknown>): unknown {
+  const result = rpcResponse.result
+  if (isRecord(result) && 'content' in result) {
+    return result.content ?? result
+  }
+  return result ?? rpcResponse
+}
 
 function rejectPendingRequests(reason: string) {
   for (const [id, { reject }] of pendingRequests) {
@@ -135,22 +182,28 @@ function processSSELine(line: string) {
   if (!dataStr) return
 
   try {
-    const parsed = JSON.parse(dataStr)
+    const parsed: unknown = JSON.parse(dataStr)
+    if (!isRecord(parsed)) return
+
+    const parsedId = getRpcId(parsed.id)
+    if (!parsedId) return
 
     // Route response to the pending request by ID
-    if (parsed.id && pendingRequests.has(parsed.id)) {
-      console.log(`[MCP] Received SSE response for request ${parsed.id}`)
-      const { resolve, reject } = pendingRequests.get(parsed.id)!
-      pendingRequests.delete(parsed.id)
+    if (pendingRequests.has(parsedId)) {
+      console.log(`[MCP] Received SSE response for request ${parsedId}`)
+      const pendingRequest = pendingRequests.get(parsedId)
+      if (!pendingRequest) return
+
+      pendingRequests.delete(parsedId)
 
       if (parsed.error) {
-        console.error(`[MCP] Server returned error for ${parsed.id}:`, parsed.error)
-        reject(new Error(parsed.error.message || 'JSON-RPC error'))
+        console.error(`[MCP] Server returned error for ${parsedId}:`, parsed.error)
+        pendingRequest.reject(new Error(getRpcErrorMessage(parsed.error) || 'JSON-RPC error'))
       } else {
-        resolve(parsed)
+        pendingRequest.resolve(parsed)
       }
-    } else if (parsed.id) {
-      console.log(`[MCP] Received SSE response for unknown request ${parsed.id} (pending: ${Array.from(pendingRequests.keys()).join(', ')})`)
+    } else {
+      console.log(`[MCP] Received SSE response for unknown request ${parsedId} (pending: ${Array.from(pendingRequests.keys()).join(', ')})`)
     }
   } catch {
     // Not JSON — could be a message endpoint or other SSE data
@@ -186,12 +239,11 @@ async function startSSEReader(reader: ReadableStreamDefaultReader<Uint8Array>, i
     console.error('[MCP] SSE reader error:', err)
   } finally {
     // Ignore stale readers that were replaced by reconnect.
-    if (sseReader !== reader) {
-      return
+    const isStaleReader = sseReader !== reader
+    if (!isStaleReader) {
+      // Active reader ended; mark disconnected and reject in-flight requests.
+      resetConnection('SSE connection lost', { rejectPending: true })
     }
-
-    // Active reader ended; mark disconnected and reject in-flight requests.
-    resetConnection('SSE connection lost', { rejectPending: true })
   }
 }
 
@@ -267,7 +319,11 @@ async function openSSEConnection(serverUrl: string, config: McpServerConfig): Pr
  * Send a JSON-RPC request via the message endpoint and wait for the response
  * to arrive on the SSE stream.
  */
-async function mcpRequest(method: string, params: any = {}, timeoutMs = 30000): Promise<any> {
+async function mcpRequest(
+  method: string,
+  params: Record<string, unknown> = {},
+  timeoutMs = 30000
+): Promise<Record<string, unknown>> {
   if (!cachedConfig) throw new Error('No MCP config available')
   if (!sseMessageEndpoint) throw new Error('No SSE message endpoint — not connected')
 
@@ -275,7 +331,7 @@ async function mcpRequest(method: string, params: any = {}, timeoutMs = 30000): 
   const headers = getHeaders(cachedConfig)
 
   // Create a promise that will be resolved when the SSE stream delivers the response
-  const responsePromise = new Promise<any>((resolve, reject) => {
+  const responsePromise = new Promise<Record<string, unknown>>((resolve, reject) => {
     pendingRequests.set(requestId, { resolve, reject })
   })
 
@@ -332,11 +388,7 @@ async function connectToMcpInternal(config: McpServerConfig): Promise<McpConnect
 
     // Step 2: Discover tools via the SSE channel
     const toolsResponse = await mcpRequest('tools/list', {}, 15000)
-    const tools: McpToolSchema[] = (toolsResponse.result?.tools || []).map((t: any) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.inputSchema,
-    }))
+    const tools = extractTools(toolsResponse)
 
     cachedTools = tools
     connectionStatus = {
@@ -377,11 +429,7 @@ export async function discoverTools(config?: McpServerConfig): Promise<McpToolSc
   // If we have an active SSE connection, use it
   if (sseMessageEndpoint && sseReader) {
     const toolsResponse = await mcpRequest('tools/list', {}, 15000)
-    const tools: McpToolSchema[] = (toolsResponse.result?.tools || []).map((t: any) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.inputSchema,
-    }))
+    const tools = extractTools(toolsResponse)
     cachedTools = tools
     return tools
   }
@@ -428,10 +476,10 @@ export async function callTool(toolName: string, args: Record<string, unknown>, 
       const rpcData = await mcpRequest('tools/call', { name: toolName, arguments: args }, 180000)
 
       if (rpcData.error) {
-        throw new Error(rpcData.error.message || 'Tool call error')
+        throw new Error(getRpcErrorMessage(rpcData.error) || 'Tool call error')
       }
 
-      const result = rpcData.result?.content || rpcData.result || rpcData
+      const result = extractToolCallResult(rpcData)
       const responseBytes = estimatePayloadBytes(result)
       console.log(
         `[MCP] Tool ${toolName} succeeded in ${Date.now() - startTime}ms (args=${argsFingerprint(args)}, responseBytes=${responseBytes})`

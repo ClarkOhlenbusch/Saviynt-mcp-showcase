@@ -62,7 +62,7 @@ export default function Page() {
   const [redactionEnabled, setRedactionEnabled] = useState(true)
   const [destructiveActionsEnabled, setDestructiveActionsEnabled] = useState(false)
 
-  const { theme, setTheme, resolvedTheme } = useTheme()
+  const { setTheme, resolvedTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
@@ -118,23 +118,7 @@ export default function Page() {
     return () => window.clearInterval(intervalId)
   }, [])
 
-  // Auto-reconnect MCP from cached config on mount
-  useEffect(() => {
-    const saved = localStorage.getItem(MCP_CONFIG_STORAGE_KEY)
-    if (!saved) return
-    const result = parseMcpConfig(saved)
-    if (result) {
-      handleConnect(result.serverUrl, result.authHeader)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const handleApiKeyChange = (key: string) => {
-    setApiKey(key)
-    localStorage.setItem('gemini_api_key', key)
-  }
-
-  async function handleConnect(serverUrl: string, authHeader: string) {
+  const handleConnect = useCallback(async (serverUrl: string, authHeader: string) => {
     setConnecting(true)
     try {
       const res = await fetch('/api/mcp/connect', {
@@ -156,6 +140,21 @@ export default function Page() {
     } finally {
       setConnecting(false)
     }
+  }, [])
+
+  // Auto-reconnect MCP from cached config on mount
+  useEffect(() => {
+    const saved = localStorage.getItem(MCP_CONFIG_STORAGE_KEY)
+    if (!saved) return
+    const result = parseMcpConfig(saved)
+    if (result) {
+      handleConnect(result.serverUrl, result.authHeader)
+    }
+  }, [handleConnect])
+
+  const handleApiKeyChange = (key: string) => {
+    setApiKey(key)
+    localStorage.setItem('gemini_api_key', key)
   }
 
   async function handleRefreshTools() {

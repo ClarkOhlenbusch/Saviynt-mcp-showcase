@@ -5,7 +5,6 @@ import { FileText, Download, Copy, Check, ChevronRight, X, Code } from 'lucide-r
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { cn } from '@/lib/utils'
 import type { Artifact } from '@/lib/mcp/types'
 import { artifactToMarkdown, artifactToEvidenceJson } from '@/lib/artifacts'
 import { MarkdownContent } from './markdown-content'

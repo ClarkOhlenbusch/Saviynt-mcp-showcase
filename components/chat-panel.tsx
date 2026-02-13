@@ -55,15 +55,61 @@ const DELIVERABLE_SECTION_PATTERNS = [
   /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?approvals required(?:\*\*)?\b/i,
 ]
 
-type MessagePart = {
-  type: string
-  [key: string]: unknown
+type MessagePart = UIMessage['parts'][number]
+
+type ToolMessagePart = MessagePart & {
+  toolName?: unknown
+  toolCallId?: unknown
+  input?: unknown
+  output?: unknown
+  state?: unknown
+  errorText?: unknown
+  duration?: unknown
 }
 
 type ArtifactCandidate = {
   type: Artifact['type']
   title: string
   markdown: string
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  return {}
+}
+
+function isToolMessagePart(part: MessagePart): part is ToolMessagePart {
+  return part.type.startsWith('tool-') || part.type === 'dynamic-tool'
+}
+
+function getToolName(part: ToolMessagePart): string {
+  if (part.type === 'dynamic-tool' && typeof part.toolName === 'string') {
+    return part.toolName
+  }
+  return part.type.split('-').slice(1).join('-')
+}
+
+function toArtifactToolTrace(part: ToolMessagePart): Artifact['evidenceJson'][number] {
+  const state = typeof part.state === 'string' ? part.state : 'input-available'
+  const args = toRecord(part.input)
+
+  return {
+    id: typeof part.toolCallId === 'string' ? part.toolCallId : '',
+    toolName: getToolName(part),
+    args,
+    argsRedacted: args,
+    responsePreview:
+      state === 'output-available'
+        ? toPreview(part.output)
+        : state === 'output-error'
+          ? toPreview(part.errorText)
+          : '',
+    duration: typeof part.duration === 'number' ? part.duration : 0,
+    success: state === 'output-available',
+    timestamp: Date.now(),
+  }
 }
 
 function toSafeTokenCount(value: unknown): number {
@@ -238,35 +284,15 @@ export function ChatPanel({
     if (!candidate) return
 
     const toolTraces = lastMsg.parts
-      ?.filter((p) => p.type.startsWith('tool-') || p.type === 'dynamic-tool')
-      .map((p) => {
-        const tp = p as any
-        const toolName = tp.type === 'dynamic-tool' ? tp.toolName : tp.type.split('-').slice(1).join('-')
-
-        return {
-          id: tp.toolCallId,
-          toolName,
-          args: tp.input,
-          argsRedacted: tp.input,
-          responsePreview:
-            tp.state === 'output-available'
-              ? toPreview(tp.output)
-              : tp.state === 'output-error'
-                ? toPreview(tp.errorText)
-                : '',
-          duration: typeof tp.duration === 'number' ? tp.duration : 0,
-          success: tp.state === 'output-available',
-          timestamp: Date.now(),
-        }
-      })
-      .filter(Boolean) || []
+      .filter(isToolMessagePart)
+      .map((part) => toArtifactToolTrace(part)) || []
 
     const artifact: Artifact = {
       id: `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       title: candidate.title,
       type: candidate.type,
       markdown: candidate.markdown,
-      evidenceJson: toolTraces as Artifact['evidenceJson'],
+      evidenceJson: toolTraces,
       createdAt: Date.now(),
     }
 

@@ -45,7 +45,7 @@ export function ApiKeyDialog({
             } else {
                 toast.error('Failed to save key')
             }
-        } catch (err) {
+        } catch {
             toast.error('Failed to save key')
         } finally {
             setSaving(false)
