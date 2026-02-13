@@ -42,6 +42,8 @@ Always structure your output with these sections:
 ## Tool Calling Guidelines
 
 - Call tools to gather real data before making any assertions about identities, access, or risk.
+- If you need multiple independent lookups, use \`mcp_parallel\` so those MCP calls run concurrently and then reason over the combined results.
+- Do not include duplicate \`toolName + args\` entries in \`mcp_parallel\`; each sub-call should be unique.
 - Always provide tool call references in your responses so users can trace the evidence.
 - Summarize large result sets rather than dumping raw data.
 

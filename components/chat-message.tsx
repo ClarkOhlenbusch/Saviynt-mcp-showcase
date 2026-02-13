@@ -24,6 +24,163 @@ function getToolName(part: any): string {
   return part.type.split('-').slice(1).join('-')
 }
 
+function toRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  return value as Record<string, unknown>
+}
+
+function parseParallelInputCalls(input: unknown): Array<{ toolName: string; args: Record<string, unknown> }> {
+  const inputObj = toRecord(input)
+  const calls = inputObj?.calls
+  if (!Array.isArray(calls)) return []
+
+  return calls
+    .map((call) => {
+      const callObj = toRecord(call)
+      const toolName = typeof callObj?.toolName === 'string' ? callObj.toolName : ''
+      const args = toRecord(callObj?.args) ?? {}
+      if (!toolName) return null
+      return { toolName, args }
+    })
+    .filter((call): call is { toolName: string; args: Record<string, unknown> } => call !== null)
+}
+
+function parseParallelOutputResults(output: unknown): Array<{
+  toolName: string
+  args?: Record<string, unknown>
+  status?: 'running' | 'complete' | 'error'
+  data?: unknown
+  duration?: number
+  success?: boolean
+  error?: string
+  requestBytes?: number
+  responseBytes?: number
+}> {
+  const outputObj = toRecord(output)
+  const results = outputObj?.results
+  if (!Array.isArray(results)) return []
+
+  const normalized: Array<{
+    toolName: string
+    args?: Record<string, unknown>
+    status?: 'running' | 'complete' | 'error'
+    data?: unknown
+    duration?: number
+    success?: boolean
+    error?: string
+    requestBytes?: number
+    responseBytes?: number
+  }> = []
+
+  for (const item of results) {
+    const itemObj = toRecord(item)
+    if (!itemObj) continue
+
+    const toolName = typeof itemObj.toolName === 'string' ? itemObj.toolName : ''
+    if (!toolName) continue
+
+    normalized.push({
+      toolName,
+      args: toRecord(itemObj.args),
+      status: itemObj.status === 'running' || itemObj.status === 'complete' || itemObj.status === 'error'
+        ? itemObj.status
+        : undefined,
+      data: itemObj.data,
+      duration: typeof itemObj.duration === 'number' ? itemObj.duration : undefined,
+      success: typeof itemObj.success === 'boolean' ? itemObj.success : undefined,
+      error: typeof itemObj.error === 'string' ? itemObj.error : undefined,
+      requestBytes: typeof itemObj.requestBytes === 'number' ? itemObj.requestBytes : undefined,
+      responseBytes: typeof itemObj.responseBytes === 'number' ? itemObj.responseBytes : undefined,
+    })
+  }
+
+  return normalized
+}
+
+function expandToolPart(part: any): Array<{
+  toolCallId?: string
+  toolName: string
+  args?: Record<string, unknown>
+  result?: unknown
+  duration?: number
+  requestBytes?: number
+  responseBytes?: number
+  state: string
+}> {
+  const toolName = getToolName(part)
+  const state = typeof part.state === 'string' ? part.state : 'input-available'
+  const toolCallId = part.toolCallId as string | undefined
+
+  if (toolName !== 'mcp_parallel') {
+    return [{
+      toolCallId,
+      toolName,
+      args: toRecord(part.input),
+      result: state === 'output-available'
+        ? part.output
+        : state === 'output-error'
+          ? part.errorText
+          : undefined,
+      duration: part.duration as number | undefined,
+      requestBytes: undefined,
+      responseBytes: undefined,
+      state,
+    }]
+  }
+
+  const plannedCalls = parseParallelInputCalls(part.input)
+  const completedResults = parseParallelOutputResults(part.output)
+
+  if (completedResults.length > 0) {
+    return completedResults.map((result, index) => ({
+      toolCallId: `${toolCallId ?? 'parallel'}:${index}`,
+      toolName: result.toolName,
+      args: result.args ?? plannedCalls[index]?.args,
+      result:
+        result.status === 'error' || result.success === false
+          ? result.error
+          : result.data,
+      duration: result.duration,
+      requestBytes: result.requestBytes,
+      responseBytes: result.responseBytes,
+      state:
+        result.status === 'running'
+          ? 'input-available'
+          : result.status === 'error' || result.success === false
+            ? 'output-error'
+            : 'output-available',
+    }))
+  }
+
+  if (plannedCalls.length > 0) {
+    return plannedCalls.map((call, index) => ({
+      toolCallId: `${toolCallId ?? 'parallel'}:${index}`,
+      toolName: call.toolName,
+      args: call.args,
+      result: state === 'output-error' ? part.errorText : undefined,
+      duration: undefined,
+      requestBytes: undefined,
+      responseBytes: undefined,
+      state,
+    }))
+  }
+
+  return [{
+    toolCallId,
+    toolName: 'mcp_parallel',
+    args: toRecord(part.input),
+    result: state === 'output-available'
+      ? part.output
+      : state === 'output-error'
+        ? part.errorText
+        : undefined,
+    duration: part.duration as number | undefined,
+    requestBytes: undefined,
+    responseBytes: undefined,
+    state,
+  }]
+}
+
 export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) {
   const isAssistant = message.role === 'assistant'
   const parts = message.parts || []
@@ -80,21 +237,7 @@ function AssistantParts({ parts, isStreaming }: { parts: UIMessage['parts']; isS
   const firstToolIdx = parts.findIndex(isToolPart)
   const groupedToolTraces = parts
     .filter(isToolPart)
-    .map((part) => {
-      const p = part as any
-      return {
-        toolCallId: p.toolCallId as string | undefined,
-        toolName: getToolName(p),
-        args: p.input as Record<string, unknown> | undefined,
-        result: p.state === 'output-available'
-          ? p.output
-          : p.state === 'output-error'
-            ? p.errorText
-            : undefined,
-        duration: p.duration as number | undefined,
-        state: p.state as string,
-      }
-    })
+    .flatMap((part) => expandToolPart(part as any))
 
   const stepStartIndices = parts
     .map((part, idx) => (part.type === 'step-start' ? idx : -1))

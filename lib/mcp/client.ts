@@ -1,4 +1,11 @@
-import type { McpToolSchema, McpConnectionStatus, McpToolCallResult, McpServerConfig } from './types'
+import type {
+  McpToolSchema,
+  McpConnectionStatus,
+  McpToolCallResult,
+  McpServerConfig,
+  McpParallelToolCall,
+  McpParallelToolCallResult,
+} from './types'
 
 /**
  * MCP Client that connects to a Saviynt MCP server via SSE (Server-Sent Events).
@@ -24,14 +31,84 @@ let connectionStatus: McpConnectionStatus = {
 // Persistent SSE connection state
 let sseReader: ReadableStreamDefaultReader<Uint8Array> | null = null
 let sseMessageEndpoint: string | null = null
-let sseBuffer = ''
-const sseDecoder = new TextDecoder()
+let connectInFlight: Promise<McpConnectionStatus> | null = null
 
 // Pending request callbacks: requestId -> { resolve, reject }
 const pendingRequests = new Map<string, {
   resolve: (value: any) => void
   reject: (reason: any) => void
 }>()
+
+function rejectPendingRequests(reason: string) {
+  for (const [id, { reject }] of pendingRequests) {
+    reject(new Error(reason))
+    pendingRequests.delete(id)
+  }
+}
+
+function resetConnection(
+  reason: string,
+  options: {
+    cancelReader?: boolean
+    rejectPending?: boolean
+  } = {}
+) {
+  const { cancelReader = false, rejectPending = false } = options
+  const readerToCancel = sseReader
+
+  sseReader = null
+  sseMessageEndpoint = null
+  connectionStatus = { ...connectionStatus, connected: false, error: reason }
+
+  if (rejectPending) {
+    rejectPendingRequests(reason)
+  }
+
+  if (cancelReader && readerToCancel) {
+    try {
+      readerToCancel.cancel()
+    } catch {
+      // Ignore reader cancellation failures during reconnect/reset
+    }
+  }
+}
+
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value)
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(',')}]`
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, nestedValue]) => `${JSON.stringify(key)}:${stableSerialize(nestedValue)}`)
+
+  return `{${entries.join(',')}}`
+}
+
+function argsFingerprint(args: Record<string, unknown>): string {
+  const serialized = stableSerialize(args)
+  let hash = 0
+  for (let i = 0; i < serialized.length; i++) {
+    hash = (hash * 31 + serialized.charCodeAt(i)) | 0
+  }
+
+  const keys = Object.keys(args).sort()
+  const keyLabel = keys.length > 0 ? keys.join(',') : 'no-args'
+  return `${keyLabel}#${Math.abs(hash)}`
+}
+
+function estimatePayloadBytes(value: unknown): number {
+  try {
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value)
+    return new TextEncoder().encode(serialized).length
+  } catch {
+    return 0
+  }
+}
 
 function getHeaders(config: McpServerConfig): Record<string, string> {
   let auth = config.authHeader
@@ -85,20 +162,21 @@ function processSSELine(line: string) {
  * Start the persistent SSE reader loop. This runs in the background
  * and routes all incoming messages to pending requests.
  */
-async function startSSEReader() {
-  if (!sseReader) return
+async function startSSEReader(reader: ReadableStreamDefaultReader<Uint8Array>, initialBuffer = '') {
+  const decoder = new TextDecoder()
+  let buffer = initialBuffer
 
   try {
     while (true) {
-      const { done, value } = await sseReader.read()
+      const { done, value } = await reader.read()
       if (done) {
         console.log('[MCP] SSE stream ended')
         break
       }
 
-      sseBuffer += sseDecoder.decode(value, { stream: true })
-      const lines = sseBuffer.split('\n')
-      sseBuffer = lines.pop() || ''
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
 
       for (const line of lines) {
         processSSELine(line)
@@ -107,16 +185,13 @@ async function startSSEReader() {
   } catch (err) {
     console.error('[MCP] SSE reader error:', err)
   } finally {
-    // Connection lost — mark as disconnected
-    sseReader = null
-    sseMessageEndpoint = null
-    connectionStatus = { ...connectionStatus, connected: false, error: 'SSE connection lost' }
-
-    // Reject all pending requests
-    for (const [id, { reject }] of pendingRequests) {
-      reject(new Error('SSE connection lost'))
-      pendingRequests.delete(id)
+    // Ignore stale readers that were replaced by reconnect.
+    if (sseReader !== reader) {
+      return
     }
+
+    // Active reader ended; mark disconnected and reject in-flight requests.
+    resetConnection('SSE connection lost', { rejectPending: true })
   }
 }
 
@@ -180,11 +255,10 @@ async function openSSEConnection(serverUrl: string, config: McpServerConfig): Pr
 
   // Store the reader and start the background reader loop
   sseReader = reader
-  sseBuffer = buffer // Carry over any remaining buffer
   sseMessageEndpoint = fullEndpoint
 
   // Start background reader (don't await — it runs forever)
-  startSSEReader()
+  void startSSEReader(reader, buffer)
 
   return fullEndpoint
 }
@@ -236,18 +310,16 @@ async function mcpRequest(method: string, params: any = {}, timeoutMs = 30000): 
   return result
 }
 
-export async function connectToMcp(config: McpServerConfig): Promise<McpConnectionStatus> {
+async function connectToMcpInternal(config: McpServerConfig): Promise<McpConnectionStatus> {
   if (!config.serverUrl) {
     return (connectionStatus = { connected: false, serverUrl: '', toolCount: 0, error: 'No server URL provided.' })
   }
 
   cachedConfig = config
 
-  // Close any existing SSE connection
-  if (sseReader) {
-    try { sseReader.cancel() } catch { }
-    sseReader = null
-    sseMessageEndpoint = null
+  // Close any existing SSE connection.
+  if (sseReader || sseMessageEndpoint) {
+    resetConnection('Reconnecting to MCP server', { cancelReader: true, rejectPending: true })
   }
 
   try {
@@ -275,8 +347,23 @@ export async function connectToMcp(config: McpServerConfig): Promise<McpConnecti
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown connection error'
     console.error('[MCP] Connection failed:', errorMessage)
+    resetConnection(errorMessage, { cancelReader: true, rejectPending: true })
     return (connectionStatus = { connected: false, serverUrl: config.serverUrl, toolCount: 0, error: errorMessage })
   }
+}
+
+export async function connectToMcp(config: McpServerConfig): Promise<McpConnectionStatus> {
+  if (connectInFlight) {
+    console.log('[MCP] Awaiting in-flight connection attempt...')
+    return connectInFlight
+  }
+
+  connectInFlight = connectToMcpInternal(config)
+    .finally(() => {
+      connectInFlight = null
+    })
+
+  return connectInFlight
 }
 
 export async function discoverTools(config?: McpServerConfig): Promise<McpToolSchema[]> {
@@ -330,7 +417,10 @@ export async function callTool(toolName: string, args: Record<string, unknown>, 
     }
 
     try {
-      console.log(`[MCP] Calling tool: ${toolName} (attempt ${attempt + 1}/${maxRetries + 1})`)
+      const requestBytes = estimatePayloadBytes(args)
+      console.log(
+        `[MCP] Calling tool: ${toolName} (attempt ${attempt + 1}/${maxRetries + 1}, args=${argsFingerprint(args)}, requestBytes=${requestBytes})`
+      )
       const rpcData = await mcpRequest('tools/call', { name: toolName, arguments: args }, 180000)
 
       if (rpcData.error) {
@@ -338,7 +428,10 @@ export async function callTool(toolName: string, args: Record<string, unknown>, 
       }
 
       const result = rpcData.result?.content || rpcData.result || rpcData
-      console.log(`[MCP] Tool ${toolName} succeeded in ${Date.now() - startTime}ms`)
+      const responseBytes = estimatePayloadBytes(result)
+      console.log(
+        `[MCP] Tool ${toolName} succeeded in ${Date.now() - startTime}ms (args=${argsFingerprint(args)}, responseBytes=${responseBytes})`
+      )
 
       return {
         toolName,
@@ -354,8 +447,7 @@ export async function callTool(toolName: string, args: Record<string, unknown>, 
 
       // Only retry on connection errors — timeouts mean the server is slow, not broken
       if (errorMsg.includes('SSE connection lost') || errorMsg.includes('not connected')) {
-        sseReader = null
-        sseMessageEndpoint = null
+        resetConnection(errorMsg, { cancelReader: true, rejectPending: true })
         if (attempt < maxRetries) {
           continue // Retry with reconnection
         }
@@ -382,6 +474,78 @@ export async function callTool(toolName: string, args: Record<string, unknown>, 
     duration: Date.now() - startTime,
     success: false,
     error: 'Exhausted all retry attempts',
+    timestamp: Date.now(),
+  }
+}
+
+export async function callToolsParallel(
+  calls: McpParallelToolCall[],
+  config?: McpServerConfig
+): Promise<McpParallelToolCallResult> {
+  const c = config || cachedConfig
+  if (!c) throw new Error('No MCP config available')
+
+  const startTime = Date.now()
+
+  if (calls.length === 0) {
+    return {
+      calls: [],
+      success: true,
+      duration: 0,
+      timestamp: Date.now(),
+    }
+  }
+
+  const dedupedCalls: McpParallelToolCall[] = []
+  const seen = new Set<string>()
+
+  for (const call of calls) {
+    const dedupeKey = `${call.toolName}:${stableSerialize(call.args)}`
+    if (seen.has(dedupeKey)) {
+      console.log(`[MCP] Skipping duplicate parallel tool call: ${call.toolName} (args=${argsFingerprint(call.args)})`)
+      continue
+    }
+    seen.add(dedupeKey)
+    dedupedCalls.push(call)
+  }
+
+  console.log(
+    `[MCP] Parallel batch requested=${calls.length}, unique=${dedupedCalls.length}`
+  )
+
+  if (dedupedCalls.length === 0) {
+    return {
+      calls: [],
+      success: true,
+      duration: Date.now() - startTime,
+      timestamp: Date.now(),
+    }
+  }
+
+  // Ensure a single shared connection before firing parallel RPC calls.
+  if (!sseReader || !sseMessageEndpoint) {
+    await connectToMcp(c)
+  }
+
+  const results = await Promise.all(
+    dedupedCalls.map((call) => callTool(call.toolName, call.args, c))
+  )
+
+  const failedCount = results.filter((result) => !result.success).length
+  const totalRequestBytes = dedupedCalls.reduce((total, call) => total + estimatePayloadBytes(call.args), 0)
+  const totalResponseBytes = results
+    .filter((result) => result.success)
+    .reduce((total, result) => total + estimatePayloadBytes(result.result), 0)
+
+  console.log(
+    `[MCP] Parallel batch complete: success=${results.length - failedCount}, failed=${failedCount}, requestBytes=${totalRequestBytes}, responseBytes=${totalResponseBytes}, duration=${Date.now() - startTime}ms`
+  )
+
+  return {
+    calls: results,
+    success: failedCount === 0,
+    duration: Date.now() - startTime,
+    error: failedCount > 0 ? `${failedCount} of ${results.length} tool calls failed` : undefined,
     timestamp: Date.now(),
   }
 }

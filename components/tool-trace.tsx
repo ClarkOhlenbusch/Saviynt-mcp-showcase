@@ -75,6 +75,8 @@ export interface ToolTraceItemData {
   args?: Record<string, unknown>
   result?: unknown
   duration?: number
+  requestBytes?: number
+  responseBytes?: number
   state: string
 }
 
@@ -162,7 +164,12 @@ function getTraceStatus(state: string): 'running' | 'complete' | 'error' {
 function getStatusLabel(trace: ToolTraceItemData, status: 'running' | 'complete' | 'error'): string {
   if (status === 'running') return 'In progress'
   if (status === 'error') return 'Needs attention'
-  if (trace.duration != null) return `${trace.duration} ms`
+  const hasDuration = trace.duration != null
+  const hasBytes = trace.responseBytes != null
+
+  if (hasDuration && hasBytes) return `${trace.duration} ms • ${formatBytes(trace.responseBytes!)}`
+  if (hasDuration) return `${trace.duration} ms`
+  if (hasBytes) return formatBytes(trace.responseBytes!)
   return 'Done'
 }
 
@@ -229,4 +236,11 @@ function hashString(input: string): number {
     hash = (hash * 31 + input.charCodeAt(i)) | 0
   }
   return hash
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0 B'
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }

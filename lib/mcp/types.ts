@@ -14,6 +14,19 @@ export interface McpToolCallResult {
   timestamp: number
 }
 
+export interface McpParallelToolCall {
+  toolName: string
+  args: Record<string, unknown>
+}
+
+export interface McpParallelToolCallResult {
+  calls: McpToolCallResult[]
+  success: boolean
+  duration: number
+  error?: string
+  timestamp: number
+}
+
 export interface McpConnectionStatus {
   connected: boolean
   serverUrl: string

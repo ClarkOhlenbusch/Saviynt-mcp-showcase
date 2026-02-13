@@ -8,6 +8,7 @@ import { redactDeep } from '@/lib/redaction'
 export const maxDuration = 300
 const MAX_TOOL_STEPS = 12
 const MAX_OUTPUT_TOKENS = 4096
+const MAX_PARALLEL_CALLS = 6
 
 export async function POST(req: Request) {
   const { messages, apiKey } = await req.json()
@@ -27,6 +28,7 @@ export async function POST(req: Request) {
   const mcpTools = getCachedTools()
   const mcpConfig = getCachedConfig()
   const gatewayConfig = getDefaultGatewayConfig()
+  const mcpToolsByName = new Map(mcpTools.map((toolSchema) => [toolSchema.name, toolSchema] as const))
 
   // Build the system prompt
   let systemPrompt = SYSTEM_PROMPT
@@ -39,6 +41,7 @@ export async function POST(req: Request) {
       systemPrompt += `- **${t.name}**: ${t.description || 'No description'}\n`
     }
     systemPrompt += '\nCall these tools when you need identity data. Always call tools before making assertions about users, access, or risk.'
+    systemPrompt += '\nWhen multiple independent MCP lookups are needed, prefer the `mcp_parallel` tool to run calls concurrently and then reason on the combined results.'
   }
 
   // Dynamically build AI SDK tools from MCP tool schemas
@@ -67,6 +70,138 @@ export async function POST(req: Request) {
           data: redactedResult,
           duration: result.duration,
         }
+      },
+    })
+  }
+
+  if (mcpTools.length > 0) {
+    aiTools.mcp_parallel = tool({
+      description: `Execute up to ${MAX_PARALLEL_CALLS} independent MCP tool calls in parallel and return when all are complete.`,
+      inputSchema: z.object({
+        calls: z.array(
+          z.object({
+            toolName: z.string().describe('Exact MCP tool name to call'),
+            args: z.record(z.unknown()).default({}).describe('Arguments for that MCP tool call'),
+          })
+        ).min(1).max(MAX_PARALLEL_CALLS),
+      }),
+      execute: async function* ({ calls }) {
+        const validatedCalls: Array<{ toolName: string; args: Record<string, unknown> }> = []
+
+        for (const call of calls) {
+          const toolSchema = mcpToolsByName.get(call.toolName)
+          const validation = validateToolCall(call.toolName, call.args, toolSchema, gatewayConfig)
+          if (!validation.valid) {
+            return { error: validation.error || `Invalid tool call: ${call.toolName}`, toolName: call.toolName }
+          }
+
+          validatedCalls.push({
+            toolName: call.toolName,
+            args: call.args,
+          })
+        }
+
+        const deduped = dedupeParallelCalls(validatedCalls)
+        const uniqueCalls = deduped.calls
+        const startTime = Date.now()
+
+        if (uniqueCalls.length === 0) {
+          return {
+            toolName: 'mcp_parallel',
+            count: 0,
+            dedupedFrom: deduped.originalCount,
+            completed: 0,
+            failed: 0,
+            inProgress: 0,
+            duration: 0,
+            success: true,
+            results: [],
+          }
+        }
+
+        type ParallelRow = {
+          toolName: string
+          args: Record<string, unknown>
+          status: 'running' | 'complete' | 'error'
+          data?: unknown
+          error?: string
+          duration?: number
+          requestBytes: number
+          responseBytes?: number
+        }
+
+        const rows: ParallelRow[] = uniqueCalls.map((call) => ({
+          toolName: call.toolName,
+          args: call.args,
+          status: 'running',
+          requestBytes: estimatePayloadBytes(call.args),
+        }))
+
+        const buildSnapshot = () => {
+          const completed = rows.filter((row) => row.status === 'complete').length
+          const failed = rows.filter((row) => row.status === 'error').length
+          const inProgress = rows.length - completed - failed
+          return {
+            toolName: 'mcp_parallel' as const,
+            count: rows.length,
+            dedupedFrom: deduped.originalCount,
+            completed,
+            failed,
+            inProgress,
+            duration: Date.now() - startTime,
+            success: failed === 0 && inProgress === 0,
+            error: failed > 0 && inProgress === 0 ? `${failed} of ${rows.length} tool calls failed` : undefined,
+            results: rows.map((row) => ({ ...row })),
+          }
+        }
+
+        const pending = new Map<number, Promise<{
+          index: number
+          result: Awaited<ReturnType<typeof callTool>>
+        }>>()
+
+        for (let index = 0; index < uniqueCalls.length; index++) {
+          const call = uniqueCalls[index]
+          const startedAt = Date.now()
+          const task = callTool(call.toolName, call.args, mcpConfig || undefined)
+            .then((result) => ({ index, result }))
+            .catch((err) => ({
+              index,
+              result: {
+                toolName: call.toolName,
+                args: call.args,
+                result: null,
+                duration: Date.now() - startedAt,
+                success: false,
+                error: err instanceof Error ? err.message : 'Unknown tool error',
+                timestamp: Date.now(),
+              },
+            }))
+          pending.set(index, task)
+        }
+
+        while (pending.size > 0) {
+          const settled = await Promise.race(pending.values())
+          pending.delete(settled.index)
+
+          const row = rows[settled.index]
+          row.duration = settled.result.duration
+
+          if (settled.result.success) {
+            row.status = 'complete'
+            row.data = redactDeep(settled.result.result, gatewayConfig.redactionEnabled)
+            row.responseBytes = estimatePayloadBytes(settled.result.result)
+          } else {
+            row.status = 'error'
+            row.error = settled.result.error || 'Unknown tool error'
+            row.responseBytes = 0
+          }
+
+          // Yielding from an async generator emits a preliminary tool result chunk.
+          yield buildSnapshot()
+        }
+
+        return buildSnapshot()
       },
     })
   }
@@ -127,6 +262,51 @@ function isUsageLimitError(message: string): boolean {
     normalized.includes('limit exceeded') ||
     normalized.includes('429')
   )
+}
+
+function estimatePayloadBytes(value: unknown): number {
+  try {
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value)
+    return new TextEncoder().encode(serialized).length
+  } catch {
+    return 0
+  }
+}
+
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value)
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(',')}]`
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, nestedValue]) => `${JSON.stringify(key)}:${stableSerialize(nestedValue)}`)
+
+  return `{${entries.join(',')}}`
+}
+
+function dedupeParallelCalls(calls: Array<{ toolName: string; args: Record<string, unknown> }>): {
+  calls: Array<{ toolName: string; args: Record<string, unknown> }>
+  originalCount: number
+} {
+  const seen = new Set<string>()
+  const deduped: Array<{ toolName: string; args: Record<string, unknown> }> = []
+
+  for (const call of calls) {
+    const key = `${call.toolName}:${stableSerialize(call.args)}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(call)
+  }
+
+  return {
+    calls: deduped,
+    originalCount: calls.length,
+  }
 }
 
 // Convert MCP JSON schema to zod schema
