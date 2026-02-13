@@ -113,7 +113,7 @@ export default function Page() {
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       setUsageClock(Date.now())
-    }, 1000)
+    }, 5000)
 
     return () => window.clearInterval(intervalId)
   }, [])

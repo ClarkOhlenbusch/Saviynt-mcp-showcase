@@ -1,3 +1,4 @@
+import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { streamText, convertToModelMessages, tool, stepCountIs } from 'ai'
 import { z } from 'zod'
 import { SYSTEM_PROMPT } from '@/lib/agent/prompts'
@@ -12,6 +13,13 @@ export const maxDuration = 300
 const MAX_TOOL_STEPS = 12
 const MAX_OUTPUT_TOKENS = 4096
 const MAX_PARALLEL_CALLS = 6
+const MAX_CONTEXT_MESSAGES = parsePositiveInt(process.env.CHAT_CONTEXT_MAX_MESSAGES, 14)
+const MAX_CONTEXT_BYTES = parsePositiveInt(process.env.CHAT_CONTEXT_MAX_BYTES, 120_000)
+const CONTEXT_FULL_FIDELITY_MESSAGES = parsePositiveInt(process.env.CHAT_CONTEXT_FULL_FIDELITY_MESSAGES, 6)
+const MAX_HISTORICAL_ASSISTANT_CHARS = parsePositiveInt(process.env.CHAT_CONTEXT_HISTORICAL_ASSISTANT_CHARS, 1_200)
+const toolSchemaCache = new Map<string, z.ZodObject<Record<string, z.ZodTypeAny>>>()
+type ModelInputMessages = Parameters<typeof convertToModelMessages>[0]
+type ModelInputMessage = ModelInputMessages[number]
 
 export async function POST(req: Request) {
   const { messages, apiKey } = await req.json()
@@ -36,13 +44,10 @@ export async function POST(req: Request) {
   // Build the system prompt
   let systemPrompt = SYSTEM_PROMPT
 
-  // Add available tools context to system prompt
+  // Keep tool guidance concise to avoid spending prompt tokens on large tool catalogs.
   if (mcpTools.length > 0) {
-    systemPrompt += '\n\n## Available MCP Tools\n\n'
-    systemPrompt += 'You have access to the following Saviynt MCP tools. Use them to gather real data:\n\n'
-    for (const t of mcpTools) {
-      systemPrompt += `- **${t.name}**: ${t.description || 'No description'}\n`
-    }
+    systemPrompt += '\n\n## MCP Tool Access\n'
+    systemPrompt += `You currently have ${mcpTools.length} Saviynt MCP tools available through function calling.`
     systemPrompt += '\nCall these tools when you need identity data. Always call tools before making assertions about users, access, or risk.'
     systemPrompt += '\nWhen multiple independent MCP lookups are needed, prefer the `mcp_parallel` tool to run calls concurrently and then reason on the combined results.'
   }
@@ -56,7 +61,7 @@ export async function POST(req: Request) {
     if (!validation.valid) continue
 
     // Build a zod schema from the MCP tool's input schema
-    const inputSchema = buildZodSchema(mcpTool.inputSchema)
+    const inputSchema = getToolInputSchema(mcpTool.name, mcpTool.inputSchema)
 
     aiTools[mcpTool.name] = tool({
       description: mcpTool.description || `MCP tool: ${mcpTool.name}`,
@@ -152,10 +157,31 @@ export async function POST(req: Request) {
           requestBytes: estimatePayloadBytes(call.args),
         }))
 
-        const buildSnapshot = () => {
+        const buildSnapshot = (includeData: boolean) => {
           const completed = rows.filter((row) => row.status === 'complete').length
           const failed = rows.filter((row) => row.status === 'error').length
           const inProgress = rows.length - completed - failed
+
+          const results = rows.map((row) => {
+            const snapshot: ParallelRow = {
+              toolName: row.toolName,
+              args: row.args,
+              status: row.status,
+              error: row.error,
+              duration: row.duration,
+              requestBytes: row.requestBytes,
+              rawResponseBytes: row.rawResponseBytes,
+              responseBytes: row.responseBytes,
+            }
+
+            if (includeData) {
+              snapshot.data = row.data
+              snapshot.payloadProfile = row.payloadProfile
+            }
+
+            return snapshot
+          })
+
           return {
             toolName: 'mcp_parallel' as const,
             count: rows.length,
@@ -166,7 +192,7 @@ export async function POST(req: Request) {
             duration: Date.now() - startTime,
             success: failed === 0 && inProgress === 0,
             error: failed > 0 && inProgress === 0 ? `${failed} of ${rows.length} tool calls failed` : undefined,
-            results: rows.map((row) => ({ ...row })),
+            results,
           }
         }
 
@@ -226,16 +252,15 @@ export async function POST(req: Request) {
           }
 
           // Yielding from an async generator emits a preliminary tool result chunk.
-          yield buildSnapshot()
+          yield buildSnapshot(false)
         }
 
-        return buildSnapshot()
+        return buildSnapshot(true)
       },
     })
   }
 
   // Initialize model provider
-  const { createGoogleGenerativeAI } = await import('@ai-sdk/google')
   const modelProvider = createGoogleGenerativeAI({
     apiKey: effectiveApiKey,
   })
@@ -250,7 +275,7 @@ export async function POST(req: Request) {
     const result = streamText({
       model: modelProvider(GEMINI_FLASH_3_PREVIEW_MODEL),
       system: systemPrompt,
-      messages: await convertToModelMessages(messages),
+      messages: await convertToModelMessages(buildContextMessages(messages)),
       tools: aiTools,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       stopWhen: stepCountIs(MAX_TOOL_STEPS),
@@ -323,6 +348,92 @@ export async function POST(req: Request) {
   }
 }
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  return Math.floor(parsed)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function truncateText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value
+  return `${value.slice(0, maxChars)}... [truncated for context]`
+}
+
+function toModelInputMessage(value: unknown): ModelInputMessage | null {
+  if (!isRecord(value)) return null
+  if (typeof value.role !== 'string' || !Array.isArray(value.parts)) return null
+
+  const { id: _id, ...rest } = value
+  return rest as ModelInputMessage
+}
+
+function slimHistoricalAssistantMessage(message: ModelInputMessage): ModelInputMessage {
+  if (message.role !== 'assistant' || !Array.isArray(message.parts)) {
+    return message
+  }
+
+  const textParts = message.parts
+    .filter((part): part is { type: 'text'; text: string } => isRecord(part) && part.type === 'text' && typeof part.text === 'string')
+    .map((part) => ({
+      ...part,
+      text: truncateText(part.text, MAX_HISTORICAL_ASSISTANT_CHARS),
+    }))
+
+  if (textParts.length === 0) {
+    return {
+      ...message,
+      parts: [{
+        type: 'text',
+        text: '[Prior tool output omitted to preserve context budget.]',
+      }] as ModelInputMessage['parts'],
+    }
+  }
+
+  return {
+    ...message,
+    parts: textParts as ModelInputMessage['parts'],
+  }
+}
+
+function buildContextMessages(messages: unknown): ModelInputMessages {
+  if (!Array.isArray(messages)) return []
+
+  const normalized = messages
+    .map((message) => toModelInputMessage(message))
+    .filter((message): message is ModelInputMessage => message !== null)
+
+  if (normalized.length === 0) return []
+
+  const selected: ModelInputMessage[] = []
+  let usedBytes = 0
+
+  for (let index = normalized.length - 1; index >= 0; index -= 1) {
+    const message = normalized[index]
+    const distanceFromLatest = normalized.length - 1 - index
+    const preserveFullMessage = distanceFromLatest < CONTEXT_FULL_FIDELITY_MESSAGES
+    const candidate = preserveFullMessage ? message : slimHistoricalAssistantMessage(message)
+    const candidateBytes = estimatePayloadBytes(candidate)
+
+    if (selected.length === 0) {
+      selected.push(candidate)
+      usedBytes += candidateBytes
+      continue
+    }
+
+    if (selected.length >= MAX_CONTEXT_MESSAGES) continue
+    if (usedBytes + candidateBytes > MAX_CONTEXT_BYTES) continue
+
+    selected.push(candidate)
+    usedBytes += candidateBytes
+  }
+
+  return selected.reverse()
+}
+
 function normalizeUsageTotals(usage: {
   inputTokens: number | undefined
   outputTokens: number | undefined
@@ -382,6 +493,19 @@ function stableSerialize(value: unknown): string {
     .map(([key, nestedValue]) => `${JSON.stringify(key)}:${stableSerialize(nestedValue)}`)
 
   return `{${entries.join(',')}}`
+}
+
+function getToolInputSchema(
+  toolName: string,
+  inputSchema?: Record<string, unknown>,
+): z.ZodObject<Record<string, z.ZodTypeAny>> {
+  const cacheKey = `${toolName}:${stableSerialize(inputSchema ?? {})}`
+  const cached = toolSchemaCache.get(cacheKey)
+  if (cached) return cached
+
+  const built = buildZodSchema(inputSchema)
+  toolSchemaCache.set(cacheKey, built)
+  return built
 }
 
 function dedupeParallelCalls(calls: Array<{ toolName: string; args: Record<string, unknown> }>): {

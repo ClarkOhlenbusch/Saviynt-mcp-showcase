@@ -296,18 +296,22 @@ async function mcpRequest(method: string, params: any = {}, timeoutMs = 30000): 
     throw new Error(`Request to message endpoint failed: ${response.status}`)
   }
 
-  // Wait for the response from the SSE stream (with timeout)
-  const result = await Promise.race([
-    responsePromise,
-    new Promise((_, reject) =>
-      setTimeout(() => {
-        pendingRequests.delete(requestId)
-        reject(new Error(`MCP request timeout (${timeoutMs / 1000}s) for ${method}`))
-      }, timeoutMs)
-    ),
-  ])
+  // Wait for the response from the SSE stream (with timeout).
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      pendingRequests.delete(requestId)
+      reject(new Error(`MCP request timeout (${timeoutMs / 1000}s) for ${method}`))
+    }, timeoutMs)
+  })
 
-  return result
+  try {
+    return await Promise.race([responsePromise, timeoutPromise])
+  } finally {
+    if (timeoutHandle != null) {
+      clearTimeout(timeoutHandle)
+    }
+  }
 }
 
 async function connectToMcpInternal(config: McpServerConfig): Promise<McpConnectionStatus> {

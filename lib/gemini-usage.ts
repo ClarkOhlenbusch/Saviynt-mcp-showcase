@@ -6,6 +6,13 @@ const DEFAULT_FREE_TIER_LIMITS = {
   rpd: 250,
 } as const
 
+const PACIFIC_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Los_Angeles',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
 function parseLimit(value: string | undefined, fallback: number): number {
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback
@@ -49,12 +56,7 @@ export type GeminiUsageSnapshot = GeminiUsageTotals & {
 }
 
 export function getPacificDayKey(timestamp: number): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Los_Angeles',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(timestamp)
+  return PACIFIC_DAY_FORMATTER.format(timestamp)
 }
 
 export function createGeminiUsageSnapshot(

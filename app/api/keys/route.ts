@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { appendFileSync } from 'fs'
-import { join } from 'path'
+import { appendFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 const logFile = join(process.cwd(), 'debug.log')
 
 function logError(msg: string, error: any) {
     const logEntry = `[${new Date().toISOString()}] ${msg}: ${JSON.stringify(error, null, 2)}\n`
-    appendFileSync(logFile, logEntry)
+    void appendFile(logFile, logEntry).catch(() => {
+        // Swallow logging failures to avoid failing API requests on disk issues.
+    })
 }
 
 export async function POST(req: Request) {
