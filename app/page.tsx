@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useCallback, useEffect, useMemo } from 'react'
-import { Settings, Zap, ZapOff, FileText, Key, HelpCircle, Github, BookOpen, Plus } from 'lucide-react'
+import { Settings, Zap, ZapOff, FileText, Key, HelpCircle, Github, BookOpen, Plus, Sun, Moon } from 'lucide-react'
+import { useTheme } from 'next-themes'
 import { Button } from '@/components/ui/button'
 import { StatusBar } from '@/components/status-bar'
 import { ChatPanel } from '@/components/chat-panel'
@@ -60,6 +61,10 @@ export default function Page() {
   // Security settings
   const [redactionEnabled, setRedactionEnabled] = useState(true)
   const [destructiveActionsEnabled, setDestructiveActionsEnabled] = useState(false)
+
+  const { theme, setTheme, resolvedTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
 
   // API Key state
   const [apiKey, setApiKey] = useState('')
@@ -315,6 +320,19 @@ export default function Page() {
               <Github className="h-4 w-4" />
             </a>
           </Button>
+
+          {/* Theme toggle */}
+          {mounted && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+              aria-label="Toggle theme"
+            >
+              {resolvedTheme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </Button>
+          )}
 
           {/* Settings */}
           <Button
