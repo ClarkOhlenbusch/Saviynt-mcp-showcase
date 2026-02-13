@@ -4,12 +4,14 @@ import React from 'react'
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
+import type { UIMessage } from 'ai'
 import { Send, Square, FileText, Loader2, AlertTriangle, BookOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ChatMessage } from './chat-message'
 import { DemoPrompts } from './demo-prompts'
 import { cn } from '@/lib/utils'
 import type { Artifact } from '@/lib/mcp/types'
+import type { GeminiMessageMetadata, GeminiUsageEvent } from '@/lib/gemini-usage'
 
 interface ChatPanelProps {
   mcpConnected: boolean
@@ -19,6 +21,7 @@ interface ChatPanelProps {
   apiKey: string
   onOpenFaq: () => void
   onOpenStartHere: () => void
+  onUsageEvent: (event: GeminiUsageEvent) => void
 }
 
 const USAGE_LIMIT_PATTERNS = [
@@ -61,6 +64,30 @@ type ArtifactCandidate = {
   type: Artifact['type']
   title: string
   markdown: string
+}
+
+function toSafeTokenCount(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0
+  return Math.max(0, Math.floor(value))
+}
+
+function toGeminiUsageEvent(metadata: GeminiMessageMetadata | undefined): GeminiUsageEvent | null {
+  if (!metadata?.usageIsFinal || !metadata.usage) return null
+
+  const inputTokens = toSafeTokenCount(metadata.usage.inputTokens)
+  const outputTokens = toSafeTokenCount(metadata.usage.outputTokens)
+  const totalTokens = toSafeTokenCount(
+    metadata.usage.totalTokens ?? inputTokens + outputTokens
+  )
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    // Use client clock for rolling-window counters (RPM/TPM), which avoids
+    // server clock skew and metadata merge timing edge cases.
+    timestamp: Date.now(),
+  }
 }
 
 function parseChatErrorMessage(error: Error | undefined): string {
@@ -168,18 +195,20 @@ export function ChatPanel({
   apiKey,
   onOpenFaq,
   onOpenStartHere,
+  onUsageEvent,
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const artifactMessageIdsRef = useRef(new Set<string>())
+  const usageMessageIdsRef = useRef(new Set<string>())
 
   // Use a ref so the transport body function always reads the latest key
   const apiKeyRef = useRef(apiKey)
   useEffect(() => { apiKeyRef.current = apiKey }, [apiKey])
 
-  const { messages, sendMessage, status, stop, error, clearError } = useChat({
+  const { messages, sendMessage, status, stop, error, clearError } = useChat<UIMessage<GeminiMessageMetadata>>({
     transport: React.useMemo(() => new DefaultChatTransport({
       api: '/api/chat',
       body: () => ({ apiKey: apiKeyRef.current }),
@@ -244,6 +273,20 @@ export function ChatPanel({
     onArtifactGenerated(artifact)
     artifactMessageIdsRef.current.add(lastMsg.id)
   }, [status, messages, onArtifactGenerated])
+
+  // Emit finalized token usage events once per assistant message
+  useEffect(() => {
+    for (const message of messages) {
+      if (message.role !== 'assistant') continue
+      if (usageMessageIdsRef.current.has(message.id)) continue
+
+      const usageEvent = toGeminiUsageEvent(message.metadata)
+      if (!usageEvent) continue
+
+      onUsageEvent(usageEvent)
+      usageMessageIdsRef.current.add(message.id)
+    }
+  }, [messages, onUsageEvent])
 
   const handleSubmit = useCallback((text: string) => {
     if (!text.trim() || isLoading) return

@@ -3,7 +3,10 @@ import { z } from 'zod'
 import { SYSTEM_PROMPT } from '@/lib/agent/prompts'
 import { callTool, getCachedTools, getCachedConfig, checkAndAutoConnect } from '@/lib/mcp/client'
 import { getDefaultGatewayConfig, validateToolCall } from '@/lib/mcp/tool-gateway'
-import { redactDeep } from '@/lib/redaction'
+import { redactDeep, truncatePreview } from '@/lib/redaction'
+import { GEMINI_FLASH_3_PREVIEW_MODEL, type GeminiUsageTotals } from '@/lib/gemini-usage'
+import { compactMcpPayload, describePayloadShape } from '@/lib/mcp/payload-optimizer'
+import { recordMcpPayloadProfile } from '@/lib/mcp/payload-profiler'
 
 export const maxDuration = 300
 const MAX_TOOL_STEPS = 12
@@ -65,9 +68,19 @@ export async function POST(req: Request) {
         }
         // Redact sensitive data before returning to LLM
         const redactedResult = redactDeep(result.result, gatewayConfig.redactionEnabled)
+        const compacted = compactMcpPayload(redactedResult)
+        recordMcpPayloadProfile({
+          toolName: mcpTool.name,
+          phase: 'single',
+          payloadShape: describePayloadShape(redactedResult),
+          payloadPreview: truncatePreview(redactedResult, 1600),
+          profile: compacted.profile,
+          timestamp: result.timestamp,
+        })
         return {
           toolName: mcpTool.name,
-          data: redactedResult,
+          data: compacted.data,
+          payloadProfile: compacted.profile,
           duration: result.duration,
         }
       },
@@ -127,7 +140,9 @@ export async function POST(req: Request) {
           error?: string
           duration?: number
           requestBytes: number
+          rawResponseBytes?: number
           responseBytes?: number
+          payloadProfile?: unknown
         }
 
         const rows: ParallelRow[] = uniqueCalls.map((call) => ({
@@ -189,11 +204,24 @@ export async function POST(req: Request) {
 
           if (settled.result.success) {
             row.status = 'complete'
-            row.data = redactDeep(settled.result.result, gatewayConfig.redactionEnabled)
-            row.responseBytes = estimatePayloadBytes(settled.result.result)
+            const redactedResult = redactDeep(settled.result.result, gatewayConfig.redactionEnabled)
+            const compacted = compactMcpPayload(redactedResult)
+            row.data = compacted.data
+            row.rawResponseBytes = compacted.profile.rawBytes
+            row.responseBytes = compacted.profile.compactedBytes
+            row.payloadProfile = compacted.profile
+            recordMcpPayloadProfile({
+              toolName: row.toolName,
+              phase: 'parallel',
+              payloadShape: describePayloadShape(redactedResult),
+              payloadPreview: truncatePreview(redactedResult, 1600),
+              profile: compacted.profile,
+              timestamp: settled.result.timestamp,
+            })
           } else {
             row.status = 'error'
             row.error = settled.result.error || 'Unknown tool error'
+            row.rawResponseBytes = 0
             row.responseBytes = 0
           }
 
@@ -213,8 +241,14 @@ export async function POST(req: Request) {
   })
 
   try {
+    let streamedUsageTotals: GeminiUsageTotals = {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+    }
+
     const result = streamText({
-      model: modelProvider('gemini-3-flash-preview'),
+      model: modelProvider(GEMINI_FLASH_3_PREVIEW_MODEL),
       system: systemPrompt,
       messages: await convertToModelMessages(messages),
       tools: aiTools,
@@ -228,6 +262,43 @@ export async function POST(req: Request) {
     })
 
     return result.toUIMessageStreamResponse({
+      messageMetadata: ({ part }) => {
+        if (part.type === 'start') {
+          return {
+            model: GEMINI_FLASH_3_PREVIEW_MODEL,
+            usage: streamedUsageTotals,
+            usageUpdatedAt: Date.now(),
+            usageIsFinal: false,
+          }
+        }
+
+        if (part.type === 'finish-step') {
+          streamedUsageTotals = addUsageTotals(
+            streamedUsageTotals,
+            normalizeUsageTotals(part.usage)
+          )
+
+          return {
+            model: GEMINI_FLASH_3_PREVIEW_MODEL,
+            usage: streamedUsageTotals,
+            usageUpdatedAt: Date.now(),
+            usageIsFinal: false,
+          }
+        }
+
+        if (part.type === 'finish') {
+          streamedUsageTotals = normalizeUsageTotals(part.totalUsage)
+
+          return {
+            model: GEMINI_FLASH_3_PREVIEW_MODEL,
+            usage: streamedUsageTotals,
+            usageUpdatedAt: Date.now(),
+            usageIsFinal: true,
+          }
+        }
+
+        return undefined
+      },
       headers: {
         'Content-Encoding': 'none',
         'Cache-Control': 'no-cache, no-transform',
@@ -249,6 +320,30 @@ export async function POST(req: Request) {
         headers: { 'Content-Type': 'application/json' },
       }
     )
+  }
+}
+
+function normalizeUsageTotals(usage: {
+  inputTokens: number | undefined
+  outputTokens: number | undefined
+  totalTokens: number | undefined
+}): GeminiUsageTotals {
+  const inputTokens = Math.max(0, usage.inputTokens ?? 0)
+  const outputTokens = Math.max(0, usage.outputTokens ?? 0)
+  const totalTokens = Math.max(0, usage.totalTokens ?? inputTokens + outputTokens)
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+  }
+}
+
+function addUsageTotals(a: GeminiUsageTotals, b: GeminiUsageTotals): GeminiUsageTotals {
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
   }
 }
 

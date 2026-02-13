@@ -54,7 +54,9 @@ function parseParallelOutputResults(output: unknown): Array<{
   success?: boolean
   error?: string
   requestBytes?: number
+  rawResponseBytes?: number
   responseBytes?: number
+  payloadProfile?: Record<string, unknown>
 }> {
   const outputObj = toRecord(output)
   const results = outputObj?.results
@@ -69,7 +71,9 @@ function parseParallelOutputResults(output: unknown): Array<{
     success?: boolean
     error?: string
     requestBytes?: number
+    rawResponseBytes?: number
     responseBytes?: number
+    payloadProfile?: Record<string, unknown>
   }> = []
 
   for (const item of results) {
@@ -90,7 +94,9 @@ function parseParallelOutputResults(output: unknown): Array<{
       success: typeof itemObj.success === 'boolean' ? itemObj.success : undefined,
       error: typeof itemObj.error === 'string' ? itemObj.error : undefined,
       requestBytes: typeof itemObj.requestBytes === 'number' ? itemObj.requestBytes : undefined,
+      rawResponseBytes: typeof itemObj.rawResponseBytes === 'number' ? itemObj.rawResponseBytes : undefined,
       responseBytes: typeof itemObj.responseBytes === 'number' ? itemObj.responseBytes : undefined,
+      payloadProfile: toRecord(itemObj.payloadProfile),
     })
   }
 
@@ -104,6 +110,7 @@ function expandToolPart(part: any): Array<{
   result?: unknown
   duration?: number
   requestBytes?: number
+  rawResponseBytes?: number
   responseBytes?: number
   state: string
 }> {
@@ -112,18 +119,28 @@ function expandToolPart(part: any): Array<{
   const toolCallId = part.toolCallId as string | undefined
 
   if (toolName !== 'mcp_parallel') {
+    const outputObj = toRecord(part.output)
+    const payloadProfile = toRecord(outputObj?.payloadProfile)
+    const compactedBytes = typeof payloadProfile?.compactedBytes === 'number'
+      ? payloadProfile.compactedBytes
+      : undefined
+    const rawBytes = typeof payloadProfile?.rawBytes === 'number'
+      ? payloadProfile.rawBytes
+      : undefined
+
     return [{
       toolCallId,
       toolName,
       args: toRecord(part.input),
       result: state === 'output-available'
-        ? part.output
+        ? outputObj?.data ?? part.output
         : state === 'output-error'
           ? part.errorText
           : undefined,
       duration: part.duration as number | undefined,
       requestBytes: undefined,
-      responseBytes: undefined,
+      rawResponseBytes: rawBytes,
+      responseBytes: compactedBytes,
       state,
     }]
   }
@@ -142,6 +159,7 @@ function expandToolPart(part: any): Array<{
           : result.data,
       duration: result.duration,
       requestBytes: result.requestBytes,
+      rawResponseBytes: result.rawResponseBytes,
       responseBytes: result.responseBytes,
       state:
         result.status === 'running'
@@ -160,6 +178,7 @@ function expandToolPart(part: any): Array<{
       result: state === 'output-error' ? part.errorText : undefined,
       duration: undefined,
       requestBytes: undefined,
+      rawResponseBytes: undefined,
       responseBytes: undefined,
       state,
     }))
@@ -176,6 +195,7 @@ function expandToolPart(part: any): Array<{
         : undefined,
     duration: part.duration as number | undefined,
     requestBytes: undefined,
+    rawResponseBytes: undefined,
     responseBytes: undefined,
     state,
   }]

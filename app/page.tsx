@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { Settings, Zap, ZapOff, FileText, Key, HelpCircle, Github, BookOpen, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBar } from '@/components/status-bar'
@@ -12,6 +12,29 @@ import { FAQDialog } from '@/components/faq-dialog'
 import { QuickStartGuideDialog } from '@/components/quick-start-guide-dialog'
 import { McpConfigDialog, MCP_CONFIG_STORAGE_KEY, parseMcpConfig } from '@/components/mcp-config-dialog'
 import type { McpConnectionStatus, McpToolSchema, Artifact } from '@/lib/mcp/types'
+import { createGeminiUsageSnapshot, type GeminiUsageEvent } from '@/lib/gemini-usage'
+
+const GEMINI_USAGE_STORAGE_KEY = 'gemini_usage_events_v1'
+const USAGE_EVENT_RETENTION_MS = 48 * 60 * 60 * 1000
+
+function normalizeUsageEvent(value: unknown): GeminiUsageEvent | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+
+  const event = value as Record<string, unknown>
+  const inputTokens = typeof event.inputTokens === 'number' ? Math.max(0, Math.floor(event.inputTokens)) : 0
+  const outputTokens = typeof event.outputTokens === 'number' ? Math.max(0, Math.floor(event.outputTokens)) : 0
+  const totalTokensRaw = typeof event.totalTokens === 'number' ? Math.max(0, Math.floor(event.totalTokens)) : inputTokens + outputTokens
+  const timestamp = typeof event.timestamp === 'number' ? Math.max(0, Math.floor(event.timestamp)) : 0
+
+  if (!Number.isFinite(totalTokensRaw) || !Number.isFinite(timestamp) || timestamp <= 0) return null
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: totalTokensRaw,
+    timestamp,
+  }
+}
 
 export default function Page() {
   // MCP state
@@ -40,6 +63,13 @@ export default function Page() {
 
   // API Key state
   const [apiKey, setApiKey] = useState('')
+  const [geminiUsageEvents, setGeminiUsageEvents] = useState<GeminiUsageEvent[]>([])
+  const [usageClock, setUsageClock] = useState(() => Date.now())
+
+  const geminiUsageSnapshot = useMemo(
+    () => createGeminiUsageSnapshot(geminiUsageEvents, usageClock),
+    [geminiUsageEvents, usageClock],
+  )
 
   // Load API key from local storage on mount
   useEffect(() => {
@@ -47,6 +77,40 @@ export default function Page() {
     if (savedKey) {
       setApiKey(savedKey)
     }
+  }, [])
+
+  // Load persisted token usage events
+  useEffect(() => {
+    const raw = localStorage.getItem(GEMINI_USAGE_STORAGE_KEY)
+    if (!raw) return
+
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (!Array.isArray(parsed)) return
+
+      const cutoff = Date.now() - USAGE_EVENT_RETENTION_MS
+      const events = parsed
+        .map((item) => normalizeUsageEvent(item))
+        .filter((item): item is GeminiUsageEvent => item !== null && item.timestamp >= cutoff)
+
+      setGeminiUsageEvents(events)
+    } catch {
+      // Ignore malformed persisted data.
+    }
+  }, [])
+
+  // Persist usage events locally
+  useEffect(() => {
+    localStorage.setItem(GEMINI_USAGE_STORAGE_KEY, JSON.stringify(geminiUsageEvents))
+  }, [geminiUsageEvents])
+
+  // Keep minute-based usage calculations current
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setUsageClock(Date.now())
+    }, 1000)
+
+    return () => window.clearInterval(intervalId)
   }, [])
 
   // Auto-reconnect MCP from cached config on mount
@@ -118,6 +182,14 @@ export default function Page() {
     setArtifacts([])
   }, [])
 
+  const handleUsageEvent = useCallback((event: GeminiUsageEvent) => {
+    setGeminiUsageEvents((prev) => {
+      const cutoff = Date.now() - USAGE_EVENT_RETENTION_MS
+      const next = [...prev, event].filter((item) => item.timestamp >= cutoff)
+      return next
+    })
+  }, [])
+
   return (
     <div className="flex flex-col h-screen bg-background">
       {/* Top bar */}
@@ -138,6 +210,7 @@ export default function Page() {
               mcpConnected={mcpStatus.connected}
               mcpToolCount={tools.length}
               llmProvider="Gemini"
+              usage={geminiUsageSnapshot}
             />
           </div>
         </div>
@@ -261,7 +334,8 @@ export default function Page() {
         <StatusBar
           mcpConnected={mcpStatus.connected}
           mcpToolCount={tools.length}
-          llmProvider="Claude Sonnet"
+          llmProvider="Gemini"
+          usage={geminiUsageSnapshot}
         />
       </div>
 
@@ -292,6 +366,7 @@ export default function Page() {
           apiKey={apiKey}
           onOpenFaq={() => setFaqOpen(true)}
           onOpenStartHere={() => setGuideOpen(true)}
+          onUsageEvent={handleUsageEvent}
         />
       </main>
 

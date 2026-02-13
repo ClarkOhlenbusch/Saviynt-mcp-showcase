@@ -76,6 +76,7 @@ export interface ToolTraceItemData {
   result?: unknown
   duration?: number
   requestBytes?: number
+  rawResponseBytes?: number
   responseBytes?: number
   state: string
 }
@@ -167,7 +168,7 @@ function getStatusLabel(trace: ToolTraceItemData, status: 'running' | 'complete'
   const hasDuration = trace.duration != null
   const hasBytes = trace.responseBytes != null
 
-  if (hasDuration && hasBytes) return `${trace.duration} ms • ${formatBytes(trace.responseBytes!)}`
+  if (hasDuration && hasBytes) return `${trace.duration} ms | ${formatBytes(trace.responseBytes!)}`
   if (hasDuration) return `${trace.duration} ms`
   if (hasBytes) return formatBytes(trace.responseBytes!)
   return 'Done'
@@ -244,3 +245,4 @@ function formatBytes(value: number): string {
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
 }
+
