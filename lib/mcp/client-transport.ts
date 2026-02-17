@@ -52,7 +52,6 @@ function processSSELine(runtime: McpClientRuntime, pendingRequests: PendingReque
     if (!parsedId) return
 
     if (pendingRequests.has(parsedId)) {
-      console.log(`[MCP] Received SSE response for request ${parsedId}`)
       const pendingRequest = pendingRequests.get(parsedId)
       if (!pendingRequest) return
 
@@ -64,12 +63,9 @@ function processSSELine(runtime: McpClientRuntime, pendingRequests: PendingReque
       } else {
         pendingRequest.resolve(parsed)
       }
-    } else {
-      console.log(`[MCP] Received SSE response for unknown request ${parsedId} (pending: ${Array.from(pendingRequests.keys()).join(', ')})`)
     }
   } catch {
-    // Not JSON. Could be a message endpoint or other SSE data.
-    console.log(`[MCP] SSE non-JSON data: ${dataStr.substring(0, 100)}`)
+    // Not JSON – ignore (message endpoint or heartbeat data).
   }
 }
 

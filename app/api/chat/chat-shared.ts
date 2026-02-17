@@ -20,7 +20,7 @@ export function truncateText(value: string, maxChars: number): string {
 export function estimatePayloadBytes(value: unknown): number {
   try {
     const serialized = typeof value === 'string' ? value : JSON.stringify(value)
-    return new TextEncoder().encode(serialized).length
+    return serialized.length
   } catch {
     return 0
   }

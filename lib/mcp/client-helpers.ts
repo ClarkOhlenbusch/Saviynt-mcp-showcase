@@ -62,24 +62,88 @@ export function stableSerialize(value: unknown): string {
 }
 
 export function argsFingerprint(args: Record<string, unknown>): string {
-  const serialized = stableSerialize(args)
-  let hash = 0
-  for (let i = 0; i < serialized.length; i++) {
-    hash = (hash * 31 + serialized.charCodeAt(i)) | 0
-  }
-
   const keys = Object.keys(args).sort()
   const keyLabel = keys.length > 0 ? keys.join(',') : 'no-args'
+
+  // Fast shallow hash – avoids full recursive serialization of large payloads
+  let hash = 0
+  for (const key of keys) {
+    for (let i = 0; i < key.length; i++) {
+      hash = (hash * 31 + key.charCodeAt(i)) | 0
+    }
+    const val = args[key]
+    if (typeof val === 'string') {
+      const sample = val.length <= 64 ? val : val.slice(0, 64)
+      for (let i = 0; i < sample.length; i++) {
+        hash = (hash * 31 + sample.charCodeAt(i)) | 0
+      }
+    } else if (typeof val === 'number' || typeof val === 'boolean') {
+      hash = (hash * 31 + (Number(val) | 0)) | 0
+    }
+  }
+
   return `${keyLabel}#${Math.abs(hash)}`
 }
 
+/**
+ * Fast byte-size estimator that avoids full JSON.stringify for large objects.
+ * Traverses at most ~200 nodes and 3 levels deep before falling back to a
+ * multiplier-based estimate. This is intentionally approximate – it is only
+ * used for logging and diagnostics, not correctness-critical paths.
+ */
 export function estimatePayloadBytes(value: unknown): number {
+  if (value == null) return 4 // "null"
+  if (typeof value === 'string') return value.length
+  if (typeof value === 'number' || typeof value === 'boolean') return 8
+
+  // For small payloads the full stringify is fine and accurate
   try {
-    const serialized = typeof value === 'string' ? value : JSON.stringify(value)
-    return new TextEncoder().encode(serialized).length
+    const quick = JSON.stringify(value)
+    if (quick.length <= 4096) return quick.length
   } catch {
-    return 0
+    // Fall through to estimation
   }
+
+  // Walk a bounded portion of the structure
+  let bytes = 0
+  let visited = 0
+  const MAX_VISIT = 200
+
+  function walk(v: unknown, depth: number): void {
+    if (visited >= MAX_VISIT || depth > 3) return
+    visited++
+
+    if (v == null) { bytes += 4; return }
+    if (typeof v === 'string') { bytes += v.length + 2; return }
+    if (typeof v === 'number' || typeof v === 'boolean') { bytes += 8; return }
+
+    if (Array.isArray(v)) {
+      bytes += 2 // []
+      for (let i = 0; i < v.length && visited < MAX_VISIT; i++) {
+        walk(v[i], depth + 1)
+      }
+      // Extrapolate for unvisited items
+      if (v.length > 0 && visited >= MAX_VISIT) {
+        const sampledItems = Math.min(v.length, visited)
+        bytes = Math.ceil(bytes * (v.length / sampledItems))
+      }
+      return
+    }
+
+    if (typeof v === 'object') {
+      const entries = Object.entries(v as Record<string, unknown>)
+      bytes += 2 // {}
+      for (const [key, nested] of entries) {
+        if (visited >= MAX_VISIT) break
+        bytes += key.length + 4 // key + quotes + colon + comma
+        walk(nested, depth + 1)
+      }
+      return
+    }
+  }
+
+  walk(value, 0)
+  return bytes
 }
 
 export function getHeaders(config: McpServerConfig): Record<string, string> {

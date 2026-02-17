@@ -8,8 +8,6 @@ import type {
 } from './types'
 import { createMcpClientRuntime } from './client-runtime'
 import {
-  argsFingerprint,
-  estimatePayloadBytes,
   extractToolCallResult,
   extractTools,
   getRpcErrorMessage,
@@ -135,10 +133,7 @@ export async function callTool(
     }
 
     try {
-      const requestBytes = estimatePayloadBytes(args)
-      console.log(
-        `[MCP] Calling tool: ${toolName} (attempt ${attempt + 1}/${maxRetries + 1}, args=${argsFingerprint(args)}, requestBytes=${requestBytes})`
-      )
+      console.log(`[MCP] Calling tool: ${toolName} (attempt ${attempt + 1}/${maxRetries + 1})`)
       const rpcData = await mcpRequest(runtime, pendingRequests, 'tools/call', { name: toolName, arguments: args }, 180000)
 
       if (rpcData.error) {
@@ -146,10 +141,7 @@ export async function callTool(
       }
 
       const result = extractToolCallResult(rpcData)
-      const responseBytes = estimatePayloadBytes(result)
-      console.log(
-        `[MCP] Tool ${toolName} succeeded in ${Date.now() - startTime}ms (args=${argsFingerprint(args)}, responseBytes=${responseBytes})`
-      )
+      console.log(`[MCP] Tool ${toolName} succeeded in ${Date.now() - startTime}ms`)
 
       return {
         toolName,
@@ -224,16 +216,15 @@ export async function callToolsParallel(
   for (const call of calls) {
     const dedupeKey = `${call.toolName}:${stableSerialize(call.args)}`
     if (seen.has(dedupeKey)) {
-      console.log(`[MCP] Skipping duplicate parallel tool call: ${call.toolName} (args=${argsFingerprint(call.args)})`)
       continue
     }
     seen.add(dedupeKey)
     dedupedCalls.push(call)
   }
 
-  console.log(
-    `[MCP] Parallel batch requested=${calls.length}, unique=${dedupedCalls.length}`
-  )
+  if (dedupedCalls.length < calls.length) {
+    console.log(`[MCP] Parallel batch: ${calls.length} requested, ${dedupedCalls.length} unique`)
+  }
 
   if (dedupedCalls.length === 0) {
     return {
@@ -253,13 +244,9 @@ export async function callToolsParallel(
   )
 
   const failedCount = results.filter((result) => !result.success).length
-  const totalRequestBytes = dedupedCalls.reduce((total, call) => total + estimatePayloadBytes(call.args), 0)
-  const totalResponseBytes = results
-    .filter((result) => result.success)
-    .reduce((total, result) => total + estimatePayloadBytes(result.result), 0)
 
   console.log(
-    `[MCP] Parallel batch complete: success=${results.length - failedCount}, failed=${failedCount}, requestBytes=${totalRequestBytes}, responseBytes=${totalResponseBytes}, duration=${Date.now() - startTime}ms`
+    `[MCP] Parallel batch complete: ${results.length - failedCount} ok, ${failedCount} failed, ${Date.now() - startTime}ms`
   )
 
   return {
