@@ -10,8 +10,23 @@ import { Button } from '@/components/ui/button'
 import { ChatMessage } from './chat-message'
 import { DemoPrompts } from './demo-prompts'
 import { cn } from '@/lib/utils'
-import type { Artifact } from '@/lib/mcp/types'
+import type { Artifact, McpPendingRequest, McpPendingRequestSummary } from '@/lib/mcp/types'
 import type { GeminiMessageMetadata, GeminiUsageEvent } from '@/lib/gemini-usage'
+import { DEMO_PROMPTS } from '@/lib/agent/prompts'
+import {
+  SUBMITTED_STATUS_MESSAGES,
+  assessArtifactCandidate,
+  buildSelectedRequestPrompts,
+  extractAssistantText,
+  isToolMessagePart,
+  isUsageLimitError,
+  parseChatErrorMessage,
+  toArtifactToolTrace,
+  toGeminiUsageEvent,
+  type MessagePart,
+} from './chat-panel/chat-panel-helpers'
+import { ReviewContextBanner } from './chat-panel/review-context-banner'
+import { DecisionConfirmDialog } from './chat-panel/decision-confirm-dialog'
 
 interface ChatPanelProps {
   mcpConnected: boolean
@@ -22,215 +37,12 @@ interface ChatPanelProps {
   onOpenFaq: () => void
   onOpenStartHere: () => void
   onUsageEvent: (event: GeminiUsageEvent) => void
-}
-
-const USAGE_LIMIT_PATTERNS = [
-  /quota/i,
-  /rate limit/i,
-  /too many requests/i,
-  /resource_exhausted/i,
-  /limit exceeded/i,
-  /\b429\b/i,
-]
-
-const MIN_SIGNIFICANT_DELIVERABLE_LENGTH = 320
-
-const DELIVERABLE_KEYWORD_PATTERNS = [
-  /\baccess review brief\b/i,
-  /\bsod conflict/i,
-  /\bseparation of duties\b/i,
-  /\bonboarding (?:and )?provisioning plan\b/i,
-  /\bprovisioning plan\b/i,
-]
-
-const DELIVERABLE_SECTION_PATTERNS = [
-  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?executive summary(?:\*\*)?\b/i,
-  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?scope(?:\*\*)?\b/i,
-  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?methodology(?:\*\*)?\b/i,
-  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?findings(?:\*\*)?\b/i,
-  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?recommendations(?:\*\*)?\b/i,
-  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?conflicts identified(?:\*\*)?\b/i,
-  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?remediation plan(?:\*\*)?\b/i,
-  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?baseline access bundle(?:\*\*)?\b/i,
-  /(?:^|\n)\s*(?:#{1,3}\s+|\*\*)?approvals required(?:\*\*)?\b/i,
-]
-
-type MessagePart = UIMessage['parts'][number]
-
-type ToolMessagePart = MessagePart & {
-  toolName?: unknown
-  toolCallId?: unknown
-  input?: unknown
-  output?: unknown
-  state?: unknown
-  errorText?: unknown
-  duration?: unknown
-}
-
-type ArtifactCandidate = {
-  type: Artifact['type']
-  title: string
-  markdown: string
-}
-
-function toRecord(value: unknown): Record<string, unknown> {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>
-  }
-  return {}
-}
-
-function isToolMessagePart(part: MessagePart): part is ToolMessagePart {
-  return part.type.startsWith('tool-') || part.type === 'dynamic-tool'
-}
-
-function getToolName(part: ToolMessagePart): string {
-  if (part.type === 'dynamic-tool' && typeof part.toolName === 'string') {
-    return part.toolName
-  }
-  return part.type.split('-').slice(1).join('-')
-}
-
-function toArtifactToolTrace(part: ToolMessagePart): Artifact['evidenceJson'][number] {
-  const state = typeof part.state === 'string' ? part.state : 'input-available'
-  const args = toRecord(part.input)
-
-  return {
-    id: typeof part.toolCallId === 'string' ? part.toolCallId : '',
-    toolName: getToolName(part),
-    args,
-    argsRedacted: args,
-    responsePreview:
-      state === 'output-available'
-        ? toPreview(part.output)
-        : state === 'output-error'
-          ? toPreview(part.errorText)
-          : '',
-    duration: typeof part.duration === 'number' ? part.duration : 0,
-    success: state === 'output-available',
-    timestamp: Date.now(),
-  }
-}
-
-function toSafeTokenCount(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 0
-  return Math.max(0, Math.floor(value))
-}
-
-function toGeminiUsageEvent(metadata: GeminiMessageMetadata | undefined): GeminiUsageEvent | null {
-  if (!metadata?.usageIsFinal || !metadata.usage) return null
-
-  const inputTokens = toSafeTokenCount(metadata.usage.inputTokens)
-  const outputTokens = toSafeTokenCount(metadata.usage.outputTokens)
-  const totalTokens = toSafeTokenCount(
-    metadata.usage.totalTokens ?? inputTokens + outputTokens
-  )
-
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens,
-    // Use client clock for rolling-window counters (RPM/TPM), which avoids
-    // server clock skew and metadata merge timing edge cases.
-    timestamp: Date.now(),
-  }
-}
-
-function parseChatErrorMessage(error: Error | undefined): string {
-  if (!error) return ''
-  const rawMessage = (error.message || String(error)).trim()
-  if (!rawMessage) return 'The request failed. Please try again.'
-
-  const jsonStart = rawMessage.indexOf('{')
-  const jsonEnd = rawMessage.lastIndexOf('}')
-  if (jsonStart >= 0 && jsonEnd > jsonStart) {
-    try {
-      const parsed = JSON.parse(rawMessage.slice(jsonStart, jsonEnd + 1)) as {
-        error?: string
-        message?: string
-      }
-      if (typeof parsed.error === 'string' && parsed.error.trim()) return parsed.error
-      if (typeof parsed.message === 'string' && parsed.message.trim()) return parsed.message
-    } catch {
-      // Fallback to raw message.
-    }
-  }
-
-  return rawMessage
-}
-
-function isUsageLimitError(message: string): boolean {
-  return USAGE_LIMIT_PATTERNS.some((pattern) => pattern.test(message))
-}
-
-function extractAssistantText(parts: MessagePart[] | undefined): string {
-  if (!Array.isArray(parts) || parts.length === 0) return ''
-  return parts
-    .filter((part): part is MessagePart & { type: 'text'; text: string } =>
-      part.type === 'text' && typeof part.text === 'string'
-    )
-    .map((part) => part.text.trimEnd())
-    .filter((text) => text.length > 0)
-    .join('\n\n')
-    .trim()
-}
-
-function toPreview(value: unknown, maxLength = 300): string {
-  if (value == null) return ''
-  if (typeof value === 'string') return value.slice(0, maxLength)
-  try {
-    return JSON.stringify(value).slice(0, maxLength)
-  } catch {
-    return String(value).slice(0, maxLength)
-  }
-}
-
-function inferArtifactType(text: string): Artifact['type'] {
-  if (/sod|separation of duties/i.test(text)) return 'sod-analysis'
-  if (/onboarding|provisioning/i.test(text)) return 'onboarding-plan'
-  if (/access review/i.test(text)) return 'access-review'
-  return 'generic'
-}
-
-function inferArtifactTitle(text: string, type: Artifact['type']): string {
-  const titleLine = text.match(/(?:^|\n)\s{0,3}#{1,2}\s+(.+?)\s*(?=\n|$)/i)?.[1]?.trim()
-  if (
-    titleLine &&
-    !/^executive summary$/i.test(titleLine) &&
-    !/^findings$/i.test(titleLine) &&
-    !/^scope$/i.test(titleLine)
-  ) {
-    return titleLine
-  }
-
-  if (type === 'access-review') return 'Access Review Brief'
-  if (type === 'sod-analysis') return 'SoD Conflict Analysis'
-  if (type === 'onboarding-plan') return 'Onboarding & Provisioning Plan'
-  return 'Generated Report'
-}
-
-function assessArtifactCandidate(text: string): ArtifactCandidate | null {
-  const normalized = text.trim()
-  if (normalized.length < MIN_SIGNIFICANT_DELIVERABLE_LENGTH) return null
-
-  const hasKeyword = DELIVERABLE_KEYWORD_PATTERNS.some((pattern) => pattern.test(normalized))
-  const sectionMatches = DELIVERABLE_SECTION_PATTERNS.reduce(
-    (count, pattern) => count + (pattern.test(normalized) ? 1 : 0),
-    0
-  )
-  const hasTable = /\n\|.+\|/.test(normalized) && /\n\|[:\-\s|]+\|/.test(normalized)
-
-  const significanceScore = (hasKeyword ? 2 : 0) + Math.min(sectionMatches, 4) + (hasTable ? 1 : 0)
-  if (significanceScore < 3 && !(hasKeyword && normalized.length >= 500)) return null
-
-  const type = inferArtifactType(normalized)
-  const title = inferArtifactTitle(normalized, type)
-
-  return {
-    type,
-    title,
-    markdown: normalized,
-  }
+  selectedRequest?: McpPendingRequest | null
+  setSelectedRequest?: (request: McpPendingRequest | null) => void
+  redactionEnabled: boolean
+  destructiveActionsEnabled: boolean
+  pendingRequestsSnapshot: McpPendingRequestSummary[]
+  pendingRequestsSnapshotUpdatedAt: number
 }
 
 export function ChatPanel({
@@ -242,6 +54,12 @@ export function ChatPanel({
   onOpenFaq,
   onOpenStartHere,
   onUsageEvent,
+  selectedRequest,
+  setSelectedRequest,
+  redactionEnabled,
+  destructiveActionsEnabled,
+  pendingRequestsSnapshot,
+  pendingRequestsSnapshotUpdatedAt,
 }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -249,15 +67,35 @@ export function ChatPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const artifactMessageIdsRef = useRef(new Set<string>())
   const usageMessageIdsRef = useRef(new Set<string>())
+  const [decisionDialogOpen, setDecisionDialogOpen] = useState(false)
+  const [pendingDecision, setPendingDecision] = useState<'approve' | 'reject' | null>(null)
+  const [decisionSubmitting, setDecisionSubmitting] = useState(false)
+  const [decisionNotice, setDecisionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
-  // Use a ref so the transport body function always reads the latest key
   const apiKeyRef = useRef(apiKey)
+  const selectedRequestRef = useRef(selectedRequest)
+  const redactionEnabledRef = useRef(redactionEnabled)
+  const destructiveActionsEnabledRef = useRef(destructiveActionsEnabled)
+  const pendingRequestsSnapshotRef = useRef(pendingRequestsSnapshot)
+  const pendingRequestsSnapshotUpdatedAtRef = useRef(pendingRequestsSnapshotUpdatedAt)
   useEffect(() => { apiKeyRef.current = apiKey }, [apiKey])
+  useEffect(() => { selectedRequestRef.current = selectedRequest }, [selectedRequest])
+  useEffect(() => { redactionEnabledRef.current = redactionEnabled }, [redactionEnabled])
+  useEffect(() => { destructiveActionsEnabledRef.current = destructiveActionsEnabled }, [destructiveActionsEnabled])
+  useEffect(() => { pendingRequestsSnapshotRef.current = pendingRequestsSnapshot }, [pendingRequestsSnapshot])
+  useEffect(() => { pendingRequestsSnapshotUpdatedAtRef.current = pendingRequestsSnapshotUpdatedAt }, [pendingRequestsSnapshotUpdatedAt])
 
   const { messages, sendMessage, status, stop, error, clearError } = useChat<UIMessage<GeminiMessageMetadata>>({
     transport: React.useMemo(() => new DefaultChatTransport({
       api: '/api/chat',
-      body: () => ({ apiKey: apiKeyRef.current }),
+      body: () => ({
+        apiKey: apiKeyRef.current,
+        selectedRequest: selectedRequestRef.current,
+        redactionEnabled: redactionEnabledRef.current,
+        destructiveActionsEnabled: destructiveActionsEnabledRef.current,
+        pendingRequestsSnapshot: pendingRequestsSnapshotRef.current,
+        pendingRequestsSnapshotUpdatedAt: pendingRequestsSnapshotUpdatedAtRef.current,
+      }),
     }), []),
   })
 
@@ -266,13 +104,34 @@ export function ChatPanel({
   const isLoading = isStreaming || isSubmitted
   const chatErrorMessage = parseChatErrorMessage(error)
   const usageLimitExceeded = isUsageLimitError(chatErrorMessage)
+  const [submittedStatusIndex, setSubmittedStatusIndex] = useState(0)
 
-  // Auto-scroll to bottom
+  const suggestedPrompts = React.useMemo(
+    () => (selectedRequest ? buildSelectedRequestPrompts(selectedRequest) : DEMO_PROMPTS),
+    [selectedRequest]
+  )
+  const promptTitle = selectedRequest ? 'Access Review Assistant' : 'Identity Security Agent'
+  const promptDescription = selectedRequest
+    ? 'Start with a focused access-review question for the active request.'
+    : 'Try one of these scenarios or type your own question below.'
+
+  useEffect(() => {
+    if (!isSubmitted) {
+      setSubmittedStatusIndex(0)
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      setSubmittedStatusIndex((prev) => (prev + 1) % SUBMITTED_STATUS_MESSAGES.length)
+    }, 2200)
+
+    return () => window.clearInterval(intervalId)
+  }, [isSubmitted])
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, status])
 
-  // Check for artifact-worthy content in the latest message
   useEffect(() => {
     if (status !== 'ready' || messages.length === 0) return
     const lastMsg = messages[messages.length - 1]
@@ -300,7 +159,6 @@ export function ChatPanel({
     artifactMessageIdsRef.current.add(lastMsg.id)
   }, [status, messages, onArtifactGenerated])
 
-  // Emit finalized token usage events once per assistant message
   useEffect(() => {
     for (const message of messages) {
       if (message.role !== 'assistant') continue
@@ -326,6 +184,76 @@ export function ChatPanel({
     sendMessage({ text: prompt })
   }, [sendMessage, clearError])
 
+  const handleDecisionIntent = useCallback((decision: 'approve' | 'reject') => {
+    if (!selectedRequestRef.current) return
+    setPendingDecision(decision)
+    setDecisionDialogOpen(true)
+    setDecisionNotice(null)
+  }, [])
+
+  const handleDecisionDialogChange = useCallback((open: boolean) => {
+    if (decisionSubmitting) return
+    setDecisionDialogOpen(open)
+    if (!open) {
+      setPendingDecision(null)
+    }
+  }, [decisionSubmitting])
+
+  const handleDecisionConfirm = useCallback(async () => {
+    const activeRequest = selectedRequestRef.current
+    if (!activeRequest || !pendingDecision || decisionSubmitting) return
+
+    setDecisionSubmitting(true)
+    setDecisionNotice(null)
+
+    try {
+      const response = await fetch('/api/access-reviews/decision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request: activeRequest,
+          decision: pendingDecision,
+          confirmed: true,
+          destructiveActionsEnabled: destructiveActionsEnabledRef.current,
+          redactionEnabled: redactionEnabledRef.current,
+        }),
+      })
+
+      let payload: Record<string, unknown> = {}
+      try {
+        const parsed = await response.json() as unknown
+        payload = (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+          ? parsed as Record<string, unknown>
+          : {}
+      } catch {
+        // Keep fallback payload for non-JSON error responses.
+      }
+
+      if (!response.ok || payload.success !== true) {
+        const errorMessage = typeof payload.error === 'string'
+          ? payload.error
+          : `Failed to ${pendingDecision} request.`
+        throw new Error(errorMessage)
+      }
+
+      const requestLabel = activeRequest.requestid || activeRequest.requestkey || 'request'
+      const outcome = pendingDecision === 'approve' ? 'approved' : 'rejected'
+
+      setDecisionNotice({
+        type: 'success',
+        message: `Request ${requestLabel} was ${outcome} successfully.`,
+      })
+      setDecisionDialogOpen(false)
+      setPendingDecision(null)
+      setSelectedRequest?.(null)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : `Failed to ${pendingDecision} request.`
+      setDecisionNotice({ type: 'error', message })
+    } finally {
+      setDecisionSubmitting(false)
+    }
+  }, [pendingDecision, decisionSubmitting, setSelectedRequest])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -333,7 +261,6 @@ export function ChatPanel({
     }
   }
 
-  // Auto-resize textarea
   useEffect(() => {
     if (inputRef.current) {
       inputRef.current.style.height = 'auto'
@@ -342,18 +269,30 @@ export function ChatPanel({
   }, [input])
 
   const hasMessages = messages.length > 0
-
-  // Determine if the last message is currently being streamed
   const lastMessage = messages[messages.length - 1]
   const isLastMessageStreaming = isStreaming && lastMessage?.role === 'assistant'
 
   return (
     <div className="flex flex-col h-full">
-      {/* Messages */}
       <div className="flex-1 overflow-y-auto" ref={scrollRef}>
         <div className="max-w-3xl mx-auto px-4 py-4">
+          {selectedRequest && (
+            <ReviewContextBanner
+              selectedRequest={selectedRequest}
+              destructiveActionsEnabled={destructiveActionsEnabled}
+              decisionSubmitting={decisionSubmitting}
+              onDecisionIntent={handleDecisionIntent}
+              onClearContext={() => setSelectedRequest?.(null)}
+            />
+          )}
           {!hasMessages && mcpConnected && (
-            <DemoPrompts onSelect={handleSuggestionSelect} visible={!hasMessages} />
+            <DemoPrompts
+              onSelect={handleSuggestionSelect}
+              visible={!hasMessages}
+              prompts={suggestedPrompts}
+              title={promptTitle}
+              description={promptDescription}
+            />
           )}
           {!hasMessages && !mcpConnected && (
             <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -390,16 +329,54 @@ export function ChatPanel({
               <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-primary/10">
                 <Loader2 className="h-4 w-4 text-primary animate-spin" />
               </div>
-              <span className="text-sm text-muted-foreground">Connecting...</span>
+              <span className="text-sm text-muted-foreground">
+                {SUBMITTED_STATUS_MESSAGES[submittedStatusIndex]}
+              </span>
             </div>
           )}
           <div ref={bottomRef} />
         </div>
       </div>
 
-      {/* Input */}
       <div className="border-t border-border bg-background/80 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-4 py-3">
+          {decisionNotice && (
+            <div className={cn(
+              'mb-3 rounded-lg border p-3',
+              decisionNotice.type === 'success'
+                ? 'border-emerald-500/40 bg-emerald-500/[0.08]'
+                : 'border-destructive/40 bg-destructive/[0.06]'
+            )}>
+              <div className="flex items-start gap-2">
+                <AlertTriangle className={cn(
+                  'mt-0.5 h-4 w-4 shrink-0',
+                  decisionNotice.type === 'success' ? 'text-emerald-600' : 'text-destructive'
+                )} />
+                <div className="min-w-0 flex-1">
+                  <p className={cn(
+                    'text-xs font-semibold',
+                    decisionNotice.type === 'success' ? 'text-emerald-700' : 'text-destructive'
+                  )}>
+                    {decisionNotice.type === 'success' ? 'Decision Submitted' : 'Decision Failed'}
+                  </p>
+                  <p className={cn(
+                    'mt-1 text-xs',
+                    decisionNotice.type === 'success' ? 'text-emerald-800' : 'text-destructive/90'
+                  )}>
+                    {decisionNotice.message}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDecisionNotice(null)}
+                  className="h-7 px-2 text-[10px] text-muted-foreground hover:text-foreground"
+                >
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          )}
           {chatErrorMessage && (
             <div className={cn(
               'mb-3 rounded-lg border p-3',
@@ -505,6 +482,17 @@ export function ChatPanel({
           </p>
         </div>
       </div>
+
+      <DecisionConfirmDialog
+        open={decisionDialogOpen}
+        pendingDecision={pendingDecision}
+        decisionSubmitting={decisionSubmitting}
+        destructiveActionsEnabled={destructiveActionsEnabled}
+        onOpenChange={handleDecisionDialogChange}
+        onConfirm={() => {
+          void handleDecisionConfirm()
+        }}
+      />
     </div>
   )
 }

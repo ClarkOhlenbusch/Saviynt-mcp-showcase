@@ -9,6 +9,8 @@ const DEFAULT_DENYLIST = [
   'modify',
   'set',
   'assign',
+  'approve',
+  'reject',
   'revoke',
   'provision',
   'deprovision',

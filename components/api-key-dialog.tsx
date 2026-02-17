@@ -58,10 +58,10 @@ export function ApiKeyDialog({
                 <DialogHeader>
                     <DialogTitle className="text-foreground flex items-center gap-2">
                         <Key className="h-4 w-4 text-primary" />
-                        Gemini API Key
+                        Gemini API Key (Optional)
                     </DialogTitle>
                     <DialogDescription className="text-muted-foreground">
-                        Enter your API key to use the agent.
+                        Add a Gemini key for chat and as a fallback for insights.
                     </DialogDescription>
                 </DialogHeader>
 
@@ -69,7 +69,7 @@ export function ApiKeyDialog({
                     <div className="rounded-lg bg-secondary/50 p-4 flex flex-col gap-3 text-sm">
                         <div className="flex flex-col gap-2">
                             <p className="text-xs text-muted-foreground">
-                                To use the agent, you need a Gemini API key. You can get a free key from Google AI Studio.
+                                Insights can run with server-side `GROQ_API_KEY` if configured. Add Gemini for chat and fallback capacity.
                             </p>
                             <a
                                 href="https://aistudio.google.com/app/apikey"

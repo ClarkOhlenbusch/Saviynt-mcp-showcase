@@ -1,44 +1,27 @@
 'use client'
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
-import { Settings, Zap, ZapOff, FileText, Key, HelpCircle, Github, BookOpen, Plus, Sun, Moon } from 'lucide-react'
+import { useState, useCallback, useEffect } from 'react'
+import { ZapOff } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { Button } from '@/components/ui/button'
 import { StatusBar } from '@/components/status-bar'
 import { ChatPanel } from '@/components/chat-panel'
-import { SettingsModal } from '@/components/settings-modal'
-import { ApiKeyDialog } from '@/components/api-key-dialog'
-import { ArtifactPanel } from '@/components/artifact-panel'
-import { FAQDialog } from '@/components/faq-dialog'
-import { QuickStartGuideDialog } from '@/components/quick-start-guide-dialog'
-import { McpConfigDialog, MCP_CONFIG_STORAGE_KEY, parseMcpConfig } from '@/components/mcp-config-dialog'
-import type { McpConnectionStatus, McpToolSchema, Artifact } from '@/lib/mcp/types'
-import { createGeminiUsageSnapshot, type GeminiUsageEvent } from '@/lib/gemini-usage'
-
-const GEMINI_USAGE_STORAGE_KEY = 'gemini_usage_events_v1'
-const USAGE_EVENT_RETENTION_MS = 48 * 60 * 60 * 1000
-
-function normalizeUsageEvent(value: unknown): GeminiUsageEvent | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-
-  const event = value as Record<string, unknown>
-  const inputTokens = typeof event.inputTokens === 'number' ? Math.max(0, Math.floor(event.inputTokens)) : 0
-  const outputTokens = typeof event.outputTokens === 'number' ? Math.max(0, Math.floor(event.outputTokens)) : 0
-  const totalTokensRaw = typeof event.totalTokens === 'number' ? Math.max(0, Math.floor(event.totalTokens)) : inputTokens + outputTokens
-  const timestamp = typeof event.timestamp === 'number' ? Math.max(0, Math.floor(event.timestamp)) : 0
-
-  if (!Number.isFinite(totalTokensRaw) || !Number.isFinite(timestamp) || timestamp <= 0) return null
-
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: totalTokensRaw,
-    timestamp,
-  }
-}
+import { RequestList } from '@/components/request-list'
+import type {
+  McpConnectionStatus,
+  McpToolSchema,
+  Artifact,
+  McpPendingRequest,
+  McpPendingRequestSummary,
+} from '@/lib/mcp/types'
+import type { GeminiUsageEvent } from '@/lib/gemini-usage'
+import { AppTopBar } from '@/components/page/app-top-bar'
+import { PageDialogs } from '@/components/page/page-dialogs'
+import { fetchPendingRequestSnapshot, PENDING_REQUEST_REFRESH_MS } from './page-pending-snapshot'
+import { useGeminiUsage } from './page-usage'
+import { MCP_CONFIG_STORAGE_KEY, parseMcpConfig } from '@/components/mcp-config-dialog'
 
 export default function Page() {
-  // MCP state
   const [mcpStatus, setMcpStatus] = useState<McpConnectionStatus>({
     connected: false,
     serverUrl: '',
@@ -48,7 +31,10 @@ export default function Page() {
   const [connecting, setConnecting] = useState(false)
   const [refreshingTools, setRefreshingTools] = useState(false)
 
-  // UI state
+  const [viewMode, setViewMode] = useState<'chat' | 'reviews'>('chat')
+  const [selectedRequest, setSelectedRequest] = useState<McpPendingRequest | null>(null)
+  const [pendingRequestsSnapshot, setPendingRequestsSnapshot] = useState<McpPendingRequestSummary[]>([])
+  const [pendingRequestsSnapshotUpdatedAt, setPendingRequestsSnapshotUpdatedAt] = useState<number>(0)
   const [configDialogOpen, setConfigDialogOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [guideOpen, setGuideOpen] = useState(false)
@@ -58,7 +44,6 @@ export default function Page() {
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [chatSessionKey, setChatSessionKey] = useState(0)
 
-  // Security settings
   const [redactionEnabled, setRedactionEnabled] = useState(true)
   const [destructiveActionsEnabled, setDestructiveActionsEnabled] = useState(false)
 
@@ -66,56 +51,36 @@ export default function Page() {
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
-  // API Key state
   const [apiKey, setApiKey] = useState('')
-  const [geminiUsageEvents, setGeminiUsageEvents] = useState<GeminiUsageEvent[]>([])
-  const [usageClock, setUsageClock] = useState(() => Date.now())
+  const geminiUsage = useGeminiUsage()
 
-  const geminiUsageSnapshot = useMemo(
-    () => createGeminiUsageSnapshot(geminiUsageEvents, usageClock),
-    [geminiUsageEvents, usageClock],
-  )
+  const handleSelectRequest = useCallback((request: McpPendingRequest) => {
+    setSelectedRequest(request)
+    setViewMode('chat')
+    setChatSessionKey((prev) => prev + 1)
+  }, [])
 
-  // Load API key from local storage on mount
+  const refreshPendingRequestSnapshot = useCallback(async (forceRefresh = false) => {
+    if (!mcpStatus.connected) {
+      setPendingRequestsSnapshot([])
+      setPendingRequestsSnapshotUpdatedAt(0)
+      return
+    }
+
+    try {
+      const snapshot = await fetchPendingRequestSnapshot(forceRefresh)
+      setPendingRequestsSnapshot(snapshot.items)
+      setPendingRequestsSnapshotUpdatedAt(snapshot.fetchedAt)
+    } catch {
+      // Non-blocking optimization path: ignore transient fetch errors.
+    }
+  }, [mcpStatus.connected])
+
   useEffect(() => {
     const savedKey = localStorage.getItem('gemini_api_key')
     if (savedKey) {
       setApiKey(savedKey)
     }
-  }, [])
-
-  // Load persisted token usage events
-  useEffect(() => {
-    const raw = localStorage.getItem(GEMINI_USAGE_STORAGE_KEY)
-    if (!raw) return
-
-    try {
-      const parsed = JSON.parse(raw) as unknown
-      if (!Array.isArray(parsed)) return
-
-      const cutoff = Date.now() - USAGE_EVENT_RETENTION_MS
-      const events = parsed
-        .map((item) => normalizeUsageEvent(item))
-        .filter((item): item is GeminiUsageEvent => item !== null && item.timestamp >= cutoff)
-
-      setGeminiUsageEvents(events)
-    } catch {
-      // Ignore malformed persisted data.
-    }
-  }, [])
-
-  // Persist usage events locally
-  useEffect(() => {
-    localStorage.setItem(GEMINI_USAGE_STORAGE_KEY, JSON.stringify(geminiUsageEvents))
-  }, [geminiUsageEvents])
-
-  // Keep minute-based usage calculations current
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setUsageClock(Date.now())
-    }, 5000)
-
-    return () => window.clearInterval(intervalId)
   }, [])
 
   const handleConnect = useCallback(async (serverUrl: string, authHeader: string) => {
@@ -142,22 +107,36 @@ export default function Page() {
     }
   }, [])
 
-  // Auto-reconnect MCP from cached config on mount
   useEffect(() => {
     const saved = localStorage.getItem(MCP_CONFIG_STORAGE_KEY)
     if (!saved) return
     const result = parseMcpConfig(saved)
     if (result) {
-      handleConnect(result.serverUrl, result.authHeader)
+      void handleConnect(result.serverUrl, result.authHeader)
     }
   }, [handleConnect])
+
+  useEffect(() => {
+    if (!mcpStatus.connected) {
+      setPendingRequestsSnapshot([])
+      setPendingRequestsSnapshotUpdatedAt(0)
+      return
+    }
+
+    void refreshPendingRequestSnapshot(true)
+    const intervalId = window.setInterval(() => {
+      void refreshPendingRequestSnapshot(true)
+    }, PENDING_REQUEST_REFRESH_MS)
+
+    return () => window.clearInterval(intervalId)
+  }, [mcpStatus.connected, refreshPendingRequestSnapshot])
 
   const handleApiKeyChange = (key: string) => {
     setApiKey(key)
     localStorage.setItem('gemini_api_key', key)
   }
 
-  async function handleRefreshTools() {
+  const handleRefreshTools = useCallback(async () => {
     setRefreshingTools(true)
     try {
       const res = await fetch('/api/mcp/tools?refresh=true')
@@ -169,7 +148,7 @@ export default function Page() {
     } finally {
       setRefreshingTools(false)
     }
-  }
+  }, [])
 
   const handleArtifactGenerated = useCallback((artifact: Artifact) => {
     setArtifacts((prev) => {
@@ -184,179 +163,44 @@ export default function Page() {
   const handleNewChat = useCallback(() => {
     setChatSessionKey((prev) => prev + 1)
     setArtifacts([])
+    setSelectedRequest(null)
   }, [])
 
   const handleUsageEvent = useCallback((event: GeminiUsageEvent) => {
-    setGeminiUsageEvents((prev) => {
-      const cutoff = Date.now() - USAGE_EVENT_RETENTION_MS
-      const next = [...prev, event].filter((item) => item.timestamp >= cutoff)
-      return next
-    })
-  }, [])
+    geminiUsage.addEvent(event)
+  }, [geminiUsage])
 
   return (
     <div className="flex flex-col h-screen bg-background">
-      {/* Top bar */}
-      <header className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-card/50 backdrop-blur-sm shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className="flex items-center justify-center h-7 w-7 rounded-md bg-primary/10">
-              <svg className="h-4 w-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                <path d="M2 17l10 5 10-5" />
-                <path d="M2 12l10 5 10-5" />
-              </svg>
-            </div>
-            <h1 className="text-sm font-semibold text-foreground hidden sm:block">Saviynt MCP Agent</h1>
-          </div>
-          <div className="hidden md:block">
-            <StatusBar
-              mcpConnected={mcpStatus.connected}
-              mcpToolCount={tools.length}
-              llmProvider="Gemini"
-              usage={geminiUsageSnapshot}
-            />
-          </div>
-        </div>
+      <AppTopBar
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        mcpStatus={mcpStatus}
+        tools={tools}
+        usage={geminiUsage.snapshot}
+        apiKey={apiKey}
+        mounted={mounted}
+        resolvedTheme={resolvedTheme}
+        onNewChat={handleNewChat}
+        onOpenGuide={() => setGuideOpen(true)}
+        onOpenFaq={() => setFaqOpen(true)}
+        onOpenApiKeyDialog={() => setApiKeyDialogOpen(true)}
+        onOpenConfigDialog={() => setConfigDialogOpen(true)}
+        onToggleArtifacts={() => setArtifactsOpen((prev) => !prev)}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onToggleTheme={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+        artifactsCount={artifacts.length}
+      />
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleNewChat}
-            className="h-7 text-xs gap-1.5 border-border text-muted-foreground hover:text-foreground bg-transparent"
-          >
-            <Plus className="h-3 w-3" />
-            New Chat
-          </Button>
-
-          {/* Quick Start Guide Button */}
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => setGuideOpen(true)}
-            className="h-7 px-2 sm:px-2.5 text-xs gap-1.5"
-          >
-            <BookOpen className="h-3 w-3" />
-            <span className="hidden sm:inline">Start Here</span>
-          </Button>
-
-          {/* FAQ Button */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setFaqOpen(true)}
-            className="h-7 text-xs gap-1.5 border-border text-muted-foreground hover:text-foreground bg-transparent"
-          >
-            <HelpCircle className="h-3 w-3" />
-            FAQ
-          </Button>
-
-          {/* API Key Button */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setApiKeyDialogOpen(true)}
-            className={`h-7 text-xs gap-1.5 border-border bg-transparent ${apiKey ? 'text-primary border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
-          >
-            <Key className="h-3 w-3" />
-            {apiKey ? 'API Key Set' : 'Add API Key'}
-          </Button>
-
-          {/* MCP Connect / Disconnect */}
-          {!mcpStatus.connected ? (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setConfigDialogOpen(true)}
-              className="h-7 text-xs gap-1.5 border-border text-muted-foreground hover:text-foreground bg-transparent"
-            >
-              <Zap className="h-3 w-3" />
-              Connect MCP
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setConfigDialogOpen(true)}
-              className="h-7 text-xs gap-1.5 border-accent/30 text-accent hover:text-accent bg-transparent"
-            >
-              <Zap className="h-3 w-3" />
-              Connected
-            </Button>
-          )}
-
-          {/* Artifacts button */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setArtifactsOpen(!artifactsOpen)}
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground relative"
-            aria-label="Open artifacts"
-          >
-            <FileText className="h-4 w-4" />
-            {artifacts.length > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 h-3.5 w-3.5 rounded-full bg-primary text-[9px] text-primary-foreground flex items-center justify-center font-bold">
-                {artifacts.length}
-              </span>
-            )}
-          </Button>
-
-          {/* GitHub repo link */}
-          <Button
-            asChild
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-          >
-            <a
-              href="https://github.com/ClarkOhlenbusch/Saviynt-mcp-showcase"
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open GitHub repository"
-              title="GitHub repository"
-            >
-              <Github className="h-4 w-4" />
-            </a>
-          </Button>
-
-          {/* Theme toggle */}
-          {mounted && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
-              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-              aria-label="Toggle theme"
-            >
-              {resolvedTheme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-          )}
-
-          {/* Settings */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setSettingsOpen(true)}
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-            aria-label="Settings"
-          >
-            <Settings className="h-4 w-4" />
-          </Button>
-        </div>
-      </header>
-
-      {/* Mobile status bar */}
       <div className="md:hidden px-4 py-1.5 border-b border-border bg-card/30">
         <StatusBar
           mcpConnected={mcpStatus.connected}
           mcpToolCount={tools.length}
           llmProvider="Gemini"
-          usage={geminiUsageSnapshot}
+          usage={geminiUsage.snapshot}
         />
       </div>
 
-      {/* Connection error banner */}
       {mcpStatus.error && !mcpStatus.connected && (
         <div className="px-4 py-2 bg-destructive/10 border-b border-destructive/20 flex items-center gap-2">
           <ZapOff className="h-3.5 w-3.5 text-destructive shrink-0" />
@@ -372,58 +216,52 @@ export default function Page() {
         </div>
       )}
 
-      {/* Main content */}
       <main className="flex-1 overflow-hidden">
-        <ChatPanel
-          key={chatSessionKey}
-          mcpConnected={mcpStatus.connected}
-          onArtifactGenerated={handleArtifactGenerated}
-          onOpenArtifacts={() => setArtifactsOpen(true)}
-          artifactCount={artifacts.length}
-          apiKey={apiKey}
-          onOpenFaq={() => setFaqOpen(true)}
-          onOpenStartHere={() => setGuideOpen(true)}
-          onUsageEvent={handleUsageEvent}
-        />
+        {viewMode === 'chat' ? (
+          <ChatPanel
+            key={chatSessionKey}
+            mcpConnected={mcpStatus.connected}
+            onArtifactGenerated={handleArtifactGenerated}
+            onOpenArtifacts={() => setArtifactsOpen(true)}
+            artifactCount={artifacts.length}
+            apiKey={apiKey}
+            onOpenFaq={() => setFaqOpen(true)}
+            onOpenStartHere={() => setGuideOpen(true)}
+            onUsageEvent={handleUsageEvent}
+            selectedRequest={selectedRequest}
+            setSelectedRequest={setSelectedRequest}
+            redactionEnabled={redactionEnabled}
+            destructiveActionsEnabled={destructiveActionsEnabled}
+            pendingRequestsSnapshot={pendingRequestsSnapshot}
+            pendingRequestsSnapshotUpdatedAt={pendingRequestsSnapshotUpdatedAt}
+          />
+        ) : (
+          <RequestList
+            mcpConnected={mcpStatus.connected}
+            onSelectRequest={handleSelectRequest}
+            apiKey={apiKey}
+          />
+        )}
       </main>
 
-      {/* MCP Config Dialog */}
-      <McpConfigDialog
-        open={configDialogOpen}
-        onOpenChange={setConfigDialogOpen}
-        onConnect={handleConnect}
+      <PageDialogs
+        configDialogOpen={configDialogOpen}
+        setConfigDialogOpen={setConfigDialogOpen}
         connecting={connecting}
-      />
-
-      {/* API Key Dialog */}
-      <ApiKeyDialog
-        open={apiKeyDialogOpen}
-        onOpenChange={setApiKeyDialogOpen}
+        onConnect={handleConnect}
+        apiKeyDialogOpen={apiKeyDialogOpen}
+        setApiKeyDialogOpen={setApiKeyDialogOpen}
         apiKey={apiKey}
         onApiKeyChange={handleApiKeyChange}
-      />
-
-      {/* Quick Start Guide */}
-      <QuickStartGuideDialog
-        open={guideOpen}
-        onOpenChange={setGuideOpen}
-        onOpenApiKey={() => setApiKeyDialogOpen(true)}
-        onOpenMcpConfig={() => setConfigDialogOpen(true)}
-        onOpenFaq={() => setFaqOpen(true)}
+        guideOpen={guideOpen}
+        setGuideOpen={setGuideOpen}
+        faqOpen={faqOpen}
+        setFaqOpen={setFaqOpen}
+        settingsOpen={settingsOpen}
+        setSettingsOpen={setSettingsOpen}
+        artifactsOpen={artifactsOpen}
+        setArtifactsOpen={setArtifactsOpen}
         apiKeySet={Boolean(apiKey)}
-        mcpConnected={mcpStatus.connected}
-      />
-
-      {/* FAQ Dialog */}
-      <FAQDialog
-        open={faqOpen}
-        onOpenChange={setFaqOpen}
-      />
-
-      {/* Settings Modal */}
-      <SettingsModal
-        open={settingsOpen}
-        onOpenChange={setSettingsOpen}
         mcpConnected={mcpStatus.connected}
         mcpServerUrl={mcpStatus.serverUrl}
         tools={tools}
@@ -433,13 +271,7 @@ export default function Page() {
         onDestructiveChange={setDestructiveActionsEnabled}
         onRefreshTools={handleRefreshTools}
         refreshing={refreshingTools}
-      />
-
-      {/* Artifacts Panel */}
-      <ArtifactPanel
         artifacts={artifacts}
-        open={artifactsOpen}
-        onOpenChange={setArtifactsOpen}
       />
     </div>
   )

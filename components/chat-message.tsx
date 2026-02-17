@@ -1,10 +1,11 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { ToolTrace } from './tool-trace'
 import { ReasoningBlock } from './reasoning-block'
 import { MarkdownContent } from './markdown-content'
-import { Bot, User } from 'lucide-react'
+import { Bot, Loader2, User } from 'lucide-react'
 import type { UIMessage } from 'ai'
 
 interface ChatMessageProps {
@@ -22,6 +23,13 @@ type ToolMessagePart = MessagePart & {
   errorText?: unknown
   duration?: unknown
 }
+
+const EMPTY_ASSISTANT_STATUS_MESSAGES = [
+  'Thinking through your request...',
+  'Preparing live MCP checks...',
+  'Reviewing identity context...',
+  'Still working... the policy graph is large today.',
+]
 
 /** Check if a part is a tool invocation (static tool-* or dynamic-tool) */
 function isToolPart(part: MessagePart): part is ToolMessagePart {
@@ -212,6 +220,27 @@ function expandToolPart(part: ToolMessagePart): Array<{
   }]
 }
 
+function EmptyAssistantPlaceholder() {
+  const [messageIndex, setMessageIndex] = useState(0)
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setMessageIndex((prev) => (prev + 1) % EMPTY_ASSISTANT_STATUS_MESSAGES.length)
+    }, 2400)
+
+    return () => window.clearInterval(intervalId)
+  }, [])
+
+  return (
+    <div className="rounded-xl border border-border/70 bg-card/80 px-4 py-3 text-sm">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+        <span>{EMPTY_ASSISTANT_STATUS_MESSAGES[messageIndex]}</span>
+      </div>
+    </div>
+  )
+}
+
 export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) {
   const isAssistant = message.role === 'assistant'
   const parts = message.parts || []
@@ -224,9 +253,22 @@ export function ChatMessage({ message, isStreaming = false }: ChatMessageProps) 
       isToolPart(p)
   )
 
-  // Don't hide streaming messages — show avatar with loading state
+  // Hide empty finalized assistant turns, but keep a visible placeholder while streaming.
   if (isAssistant && !hasContent && !isStreaming) {
     return null
+  }
+
+  if (isAssistant && !hasContent && isStreaming) {
+    return (
+      <div className="flex gap-3 py-4">
+        <div className="flex items-center justify-center h-8 w-8 rounded-lg shrink-0 bg-primary/10">
+          <Bot className="h-4 w-4 text-primary" />
+        </div>
+        <div className="flex flex-col gap-1 min-w-0 w-full max-w-[85%]">
+          <EmptyAssistantPlaceholder />
+        </div>
+      </div>
+    )
   }
 
   return (

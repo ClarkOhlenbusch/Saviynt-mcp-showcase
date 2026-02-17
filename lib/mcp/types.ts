@@ -67,3 +67,29 @@ export interface Artifact {
   evidenceJson: Record<string, unknown>[]
   createdAt: number
 }
+
+export interface McpPendingRequest {
+  requestid: string
+  requestkey: string
+  requestedfor: string
+  requestedby: string
+  requesttype: string
+  requestsubmittedon: string
+  duedate: string
+  requestcomments: string
+  endpoint?: string
+  securitysystem?: string
+  // AI-augmented fields
+  aiRiskAnalysis?: string
+  aiRiskLevel?: 'low' | 'medium' | 'high'
+  aiInsightSource?: 'ai' | 'heuristic' | 'cache'
+}
+
+export interface McpPendingRequestSummary {
+  requestid: string
+  requestkey: string
+  requestedfor: string
+  requesttype: string
+  duedate: string
+  endpoint?: string
+}

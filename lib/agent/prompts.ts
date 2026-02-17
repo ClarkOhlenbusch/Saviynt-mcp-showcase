@@ -1,3 +1,11 @@
+export type DemoPromptCard = {
+  id: string
+  title: string
+  subtitle: string
+  prompt: string
+  icon: string
+}
+
 export const SYSTEM_PROMPT = `You are an Identity Security Agent powered by Saviynt MCP (Model Context Protocol). You help organizations manage identity governance, access reviews, separation of duties (SoD) compliance, and access provisioning.
 
 ## Core Principles
@@ -55,7 +63,7 @@ Always structure your output with these sections:
 - Always end reports with a clear "Next Steps" or "Recommendations" section.
 `
 
-export const DEMO_PROMPTS = [
+export const DEMO_PROMPTS: DemoPromptCard[] = [
   {
     id: 'access-review',
     title: 'Access Review Brief',
@@ -77,4 +85,31 @@ export const DEMO_PROMPTS = [
     prompt: 'Generate an onboarding and provisioning plan for a new hire joining the Sales department as a Senior Account Executive. Include the baseline access bundle, required approvals, time-bound access for initial training, and relevant compliance controls.',
     icon: 'user-plus',
   },
-] as const
+]
+
+export const ACCESS_REVIEW_PROMPTS: DemoPromptCard[] = [
+  {
+    id: 'review-risk',
+    title: 'Risk Snapshot',
+    subtitle: 'Top concerns first',
+    prompt:
+      'Review this selected access request and summarize the top risks, confidence level, and missing evidence before a final decision.',
+    icon: 'shield-check',
+  },
+  {
+    id: 'review-evidence',
+    title: 'Evidence Checklist',
+    subtitle: 'What to verify next',
+    prompt:
+      'List the exact Saviynt checks we should run for this access request and explain what approval or rejection evidence each check should provide.',
+    icon: 'list-checks',
+  },
+  {
+    id: 'review-decision',
+    title: 'Decision Draft',
+    subtitle: 'Approve or reject',
+    prompt:
+      'Based on this selected request, provide a recommendation to approve or reject, including rationale, risk tradeoffs, and a concise reviewer note.',
+    icon: 'message-square-warning',
+  },
+]
