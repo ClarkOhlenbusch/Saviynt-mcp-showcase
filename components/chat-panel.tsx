@@ -308,12 +308,13 @@ export function ChatPanel({
           )}
           {!hasMessages && !mcpConnected && (
             <div className="flex flex-col items-center justify-center py-24 text-center">
-              <div className="flex items-center justify-center h-14 w-14 rounded-2xl bg-primary/10 mb-4">
-                <svg className="h-7 w-7 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                  <path d="M2 17l10 5 10-5" />
-                  <path d="M2 12l10 5 10-5" />
-                </svg>
+              <div className="flex items-center justify-center mb-6">
+                <img
+                  src="https://saviynt.com/hubfs/raw_assets/saviynt-theme-26/169/js_client_assets/assets/saviynt-logo-DWEmNKg8.svg"
+                  alt="Saviynt"
+                  className="h-10 w-auto"
+                  loading="eager"
+                />
               </div>
               <h2 className="text-lg font-semibold text-foreground mb-1">Start Here</h2>
               <p className="text-sm text-muted-foreground max-w-sm text-pretty">
