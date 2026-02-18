@@ -6,7 +6,7 @@ import type { McpPendingRequest } from '@/lib/mcp/types'
 type ReviewContextBannerProps = {
   selectedRequest: McpPendingRequest
   destructiveActionsEnabled: boolean
-  decisionSubmitting: boolean
+
   onDecisionIntent: (decision: 'approve' | 'reject') => void
   onClearContext: () => void
 }
@@ -14,7 +14,6 @@ type ReviewContextBannerProps = {
 export function ReviewContextBanner({
   selectedRequest,
   destructiveActionsEnabled,
-  decisionSubmitting,
   onDecisionIntent,
   onClearContext,
 }: ReviewContextBannerProps) {
@@ -37,7 +36,7 @@ export function ReviewContextBanner({
             size="sm"
             className="h-7 text-[10px] px-2.5"
             onClick={() => onDecisionIntent('approve')}
-            disabled={!destructiveActionsEnabled || decisionSubmitting}
+            disabled={!destructiveActionsEnabled}
           >
             Approve Request
           </Button>
@@ -46,7 +45,7 @@ export function ReviewContextBanner({
             variant="destructive"
             className="h-7 text-[10px] px-2.5"
             onClick={() => onDecisionIntent('reject')}
-            disabled={!destructiveActionsEnabled || decisionSubmitting}
+            disabled={!destructiveActionsEnabled}
           >
             Reject Request
           </Button>

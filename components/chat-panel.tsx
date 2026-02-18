@@ -73,8 +73,8 @@ export function ChatPanel({
   const usageMessageIdsRef = useRef(new Set<string>())
   const [decisionDialogOpen, setDecisionDialogOpen] = useState(false)
   const [pendingDecision, setPendingDecision] = useState<'approve' | 'reject' | null>(null)
-  const [decisionSubmitting, setDecisionSubmitting] = useState(false)
-  const [decisionNotice, setDecisionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+
+
 
   const apiKeyRef = useRef(apiKey)
   const saviyntUsernameRef = useRef(saviyntUsername)
@@ -198,73 +198,29 @@ export function ChatPanel({
     if (!selectedRequestRef.current) return
     setPendingDecision(decision)
     setDecisionDialogOpen(true)
-    setDecisionNotice(null)
   }, [])
 
   const handleDecisionDialogChange = useCallback((open: boolean) => {
-    if (decisionSubmitting) return
     setDecisionDialogOpen(open)
     if (!open) {
       setPendingDecision(null)
     }
-  }, [decisionSubmitting])
+  }, [])
 
   const handleDecisionConfirm = useCallback(async () => {
     const activeRequest = selectedRequestRef.current
-    if (!activeRequest || !pendingDecision || decisionSubmitting) return
+    if (!activeRequest || !pendingDecision) return
 
-    setDecisionSubmitting(true)
-    setDecisionNotice(null)
+    setDecisionDialogOpen(false)
+    const decision = pendingDecision
+    setPendingDecision(null)
 
-    try {
-      const response = await fetch('/api/access-reviews/decision', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          request: activeRequest,
-          decision: pendingDecision,
-          confirmed: true,
-          destructiveActionsEnabled: destructiveActionsEnabledRef.current,
-          redactionEnabled: redactionEnabledRef.current,
-          saviyntUsername: saviyntUsernameRef.current,
-          saviyntPassword: saviyntPasswordRef.current,
-        }),
-      })
+    const action = decision === 'approve' ? 'approve' : 'reject'
+    const prompt = `Please ${action} this request for ${activeRequest.requestedfor} (Request ID: ${activeRequest.requestid || activeRequest.requestkey}).`
 
-      let payload: Record<string, unknown> = {}
-      try {
-        const parsed = await response.json() as unknown
-        payload = (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
-          ? parsed as Record<string, unknown>
-          : {}
-      } catch {
-        // Keep fallback payload for non-JSON error responses.
-      }
-
-      if (!response.ok || payload.success !== true) {
-        const errorMessage = typeof payload.error === 'string'
-          ? payload.error
-          : `Failed to ${pendingDecision} request.`
-        throw new Error(errorMessage)
-      }
-
-      const requestLabel = activeRequest.requestid || activeRequest.requestkey || 'request'
-      const outcome = pendingDecision === 'approve' ? 'approved' : 'rejected'
-
-      setDecisionNotice({
-        type: 'success',
-        message: `Request ${requestLabel} was ${outcome} successfully.`,
-      })
-      setDecisionDialogOpen(false)
-      setPendingDecision(null)
-      setSelectedRequest?.(null)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : `Failed to ${pendingDecision} request.`
-      setDecisionNotice({ type: 'error', message })
-    } finally {
-      setDecisionSubmitting(false)
-    }
-  }, [pendingDecision, decisionSubmitting, setSelectedRequest])
+    clearError()
+    sendMessage({ text: prompt })
+  }, [pendingDecision, clearError, sendMessage])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -292,7 +248,7 @@ export function ChatPanel({
             <ReviewContextBanner
               selectedRequest={selectedRequest}
               destructiveActionsEnabled={destructiveActionsEnabled}
-              decisionSubmitting={decisionSubmitting}
+
               onDecisionIntent={handleDecisionIntent}
               onClearContext={() => setSelectedRequest?.(null)}
             />
@@ -353,43 +309,7 @@ export function ChatPanel({
 
       <div className="border-t border-border bg-background/80 backdrop-blur-sm">
         <div className="max-w-3xl mx-auto px-4 py-3">
-          {decisionNotice && (
-            <div className={cn(
-              'mb-3 rounded-lg border p-3',
-              decisionNotice.type === 'success'
-                ? 'border-emerald-500/40 bg-emerald-500/[0.08]'
-                : 'border-destructive/40 bg-destructive/[0.06]'
-            )}>
-              <div className="flex items-start gap-2">
-                <AlertTriangle className={cn(
-                  'mt-0.5 h-4 w-4 shrink-0',
-                  decisionNotice.type === 'success' ? 'text-emerald-600' : 'text-destructive'
-                )} />
-                <div className="min-w-0 flex-1">
-                  <p className={cn(
-                    'text-xs font-semibold',
-                    decisionNotice.type === 'success' ? 'text-emerald-700' : 'text-destructive'
-                  )}>
-                    {decisionNotice.type === 'success' ? 'Decision Submitted' : 'Decision Failed'}
-                  </p>
-                  <p className={cn(
-                    'mt-1 text-xs',
-                    decisionNotice.type === 'success' ? 'text-emerald-800' : 'text-destructive/90'
-                  )}>
-                    {decisionNotice.message}
-                  </p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setDecisionNotice(null)}
-                  className="h-7 px-2 text-[10px] text-muted-foreground hover:text-foreground"
-                >
-                  Dismiss
-                </Button>
-              </div>
-            </div>
-          )}
+
           {chatErrorMessage && (
             <div className={cn(
               'mb-3 rounded-lg border p-3',
@@ -499,7 +419,7 @@ export function ChatPanel({
       <DecisionConfirmDialog
         open={decisionDialogOpen}
         pendingDecision={pendingDecision}
-        decisionSubmitting={decisionSubmitting}
+
         destructiveActionsEnabled={destructiveActionsEnabled}
         onOpenChange={handleDecisionDialogChange}
         onConfirm={() => {

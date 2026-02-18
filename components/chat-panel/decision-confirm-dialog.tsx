@@ -13,7 +13,6 @@ import { cn } from '@/lib/utils'
 type DecisionConfirmDialogProps = {
   open: boolean
   pendingDecision: 'approve' | 'reject' | null
-  decisionSubmitting: boolean
   destructiveActionsEnabled: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
@@ -22,7 +21,6 @@ type DecisionConfirmDialogProps = {
 export function DecisionConfirmDialog({
   open,
   pendingDecision,
-  decisionSubmitting,
   destructiveActionsEnabled,
   onOpenChange,
   onConfirm,
@@ -41,24 +39,19 @@ export function DecisionConfirmDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={decisionSubmitting}>
+          <AlertDialogCancel>
             Cancel
           </AlertDialogCancel>
           <AlertDialogAction
             className={cn(
               pendingDecision === 'reject' && 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
             )}
-            disabled={decisionSubmitting || !destructiveActionsEnabled || !pendingDecision}
-            onClick={(event) => {
-              event.preventDefault()
-              onConfirm()
-            }}
+            disabled={!destructiveActionsEnabled || !pendingDecision}
+            onClick={() => onConfirm()}
           >
-            {decisionSubmitting
-              ? 'Submitting...'
-              : pendingDecision === 'approve'
-                ? 'Confirm Approval'
-                : 'Confirm Rejection'}
+            {pendingDecision === 'approve'
+              ? 'Confirm Approval'
+              : 'Confirm Rejection'}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
