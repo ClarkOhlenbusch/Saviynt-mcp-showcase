@@ -312,7 +312,7 @@ export function ChatPanel({
                 <img
                   src="https://saviynt.com/hubfs/raw_assets/saviynt-theme-26/169/js_client_assets/assets/saviynt-logo-DWEmNKg8.svg"
                   alt="Saviynt"
-                  className="h-10 w-auto"
+                  className="h-10 w-auto dark:invert"
                   loading="eager"
                 />
               </div>

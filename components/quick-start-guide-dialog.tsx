@@ -141,7 +141,7 @@ export function QuickStartGuideDialog({
                   'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]',
                   apiKeySet
                     ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
-                    : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                    : 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400'
                 )}
               >
                 API Key: {apiKeySet ? 'Set' : 'Missing'}
@@ -151,7 +151,7 @@ export function QuickStartGuideDialog({
                   'inline-flex items-center rounded-full border px-2 py-0.5 text-[11px]',
                   mcpConnected
                     ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
-                    : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                    : 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400'
                 )}
               >
                 MCP: {mcpConnected ? 'Connected' : 'Not Connected'}
