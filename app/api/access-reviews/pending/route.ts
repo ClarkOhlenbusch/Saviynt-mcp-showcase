@@ -3,6 +3,9 @@ import type { McpPendingRequest } from '@/lib/mcp/types'
 
 const DEFAULT_MAX_REQUESTS = 10
 const MAX_REQUESTS_LIMIT = 50
+const DEFAULT_PASSES = 1
+const MAX_PASSES = 5
+const PER_CALL_MAX = 10
 const CACHE_TTL_MS = parsePositiveInt(process.env.PENDING_REQUEST_CACHE_TTL_MS, 60_000)
 const SAVIYNT_USERNAME_ENV_KEYS = ['SAVIYNT_USERNAME', 'SAVIYNT_LOGIN_USERNAME'] as const
 const SAVIYNT_PASSWORD_ENV_KEYS = ['SAVIYNT_PASSWORD', 'SAVIYNT_LOGIN_PASSWORD'] as const
@@ -34,6 +37,8 @@ async function handlePendingRequest(
   const refresh = url.searchParams.get('refresh') === 'true' || payload.refresh === true
   const maxFromBody = typeof payload.max === 'number' ? String(payload.max) : null
   const max = clampPositiveInt(maxFromBody ?? url.searchParams.get('max'), DEFAULT_MAX_REQUESTS, MAX_REQUESTS_LIMIT)
+  const passesFromBody = typeof payload.passes === 'number' ? String(payload.passes) : null
+  const passes = clampPositiveInt(passesFromBody ?? url.searchParams.get('passes'), DEFAULT_PASSES, MAX_PASSES)
 
   const now = Date.now()
   const cacheFresh = cache && now - cache.fetchedAt <= CACHE_TTL_MS
@@ -57,7 +62,7 @@ async function handlePendingRequest(
       await checkAndAutoConnect()
     }
 
-    const toolResult = await callPendingRequestTool(max, mcpConfig)
+    const toolResult = await callPendingRequestTool(max, mcpConfig, passes)
 
     if (!toolResult.success) {
       throw new Error(toolResult.error || 'Pending request tool call failed')
@@ -74,7 +79,7 @@ async function handlePendingRequest(
       loginAttempted = true
       const loginResult = await attemptSaviyntLogin(loginCredentials.username, loginCredentials.password)
       if (loginResult.success) {
-        const retried = await callPendingRequestTool(max, mcpConfig)
+        const retried = await callPendingRequestTool(max, mcpConfig, passes)
         if (retried.success) {
           effectiveToolResult = retried
           authRequired = extractAuthRequired(effectiveToolResult.result)
@@ -155,33 +160,140 @@ async function handlePendingRequest(
 
 async function callPendingRequestTool(
   max: number,
-  mcpConfig: { serverUrl: string; authHeader: string } | null
+  mcpConfig: { serverUrl: string; authHeader: string } | null,
+  passes: number = 1
 ) {
-  const first = await callTool('get_list_of_pending_requests_for_approver', { max })
-  if (first.success) return first
+  const first = await callTool('get_list_of_pending_requests_for_approver', { max: PER_CALL_MAX })
+  if (!first.success) {
+    if (!isRetryablePendingError(first.error)) {
+      return first
+    }
 
-  if (!isRetryablePendingError(first.error)) {
-    return first
+    if (mcpConfig) {
+      const status = await connectToMcp(mcpConfig)
+      if (!status.connected) return first
+    } else {
+      await checkAndAutoConnect()
+    }
+
+    const retry = await callTool('get_list_of_pending_requests_for_approver', { max: PER_CALL_MAX })
+    if (!retry.success) {
+      if (!retry.error && first.error) {
+        return { ...retry, error: first.error }
+      }
+      return retry
+    }
+
+    // Single-pass: return the retry result directly
+    if (passes <= 1) return retry
+
+    // Multi-pass: use retry as the seed and continue below
+    return await multiPassFetch(retry, max, mcpConfig, passes - 1)
   }
 
-  if (mcpConfig) {
-    const status = await connectToMcp(mcpConfig)
-    if (!status.connected) return first
-  } else {
-    await checkAndAutoConnect()
-  }
+  if (passes <= 1) return first
 
-  const second = await callTool('get_list_of_pending_requests_for_approver', { max })
-  if (second.success) return second
+  return await multiPassFetch(first, max, mcpConfig, passes - 1)
+}
 
-  if (!second.error && first.error) {
-    return {
-      ...second,
-      error: first.error,
+/**
+ * Makes additional MCP calls to accumulate more unique pending requests.
+ * Deduplicates by requestkey/requestid across all passes.
+ */
+async function multiPassFetch(
+  seedResult: { success: boolean; result?: unknown; error?: string },
+  max: number,
+  mcpConfig: { serverUrl: string; authHeader: string } | null,
+  remainingPasses: number
+) {
+  // Build a deduplication set from the seed results
+  const seedList = extractRawRequestList(seedResult.result)
+  const seen = new Set<string>()
+  const allItems: unknown[] = []
+
+  for (const item of seedList) {
+    const key = dedupeKey(item)
+    if (key && !seen.has(key)) {
+      seen.add(key)
+      allItems.push(item)
     }
   }
 
-  return second
+  let currentOffset = seedList.length
+
+  for (let i = 0; i < remainingPasses && allItems.length < max; i++) {
+    try {
+      const next = await callTool('get_list_of_pending_requests_for_approver', {
+        max: PER_CALL_MAX,
+        offset: currentOffset,
+      })
+      if (!next.success) {
+        // On connection error, try to reconnect once and retry this pass
+        if (isRetryablePendingError(next.error)) {
+          if (mcpConfig) {
+            const status = await connectToMcp(mcpConfig)
+            if (!status.connected) continue
+          } else {
+            await checkAndAutoConnect()
+          }
+          const retried = await callTool('get_list_of_pending_requests_for_approver', {
+            max: PER_CALL_MAX,
+            offset: currentOffset,
+          })
+          if (!retried.success) continue
+          const retriedItems = extractRawRequestList(retried.result)
+          for (const item of retriedItems) {
+            const key = dedupeKey(item)
+            if (key && !seen.has(key)) {
+              seen.add(key)
+              allItems.push(item)
+            }
+          }
+          currentOffset += PER_CALL_MAX
+        }
+        continue
+      }
+
+      const nextItems = extractRawRequestList(next.result)
+
+      // If the MCP returned zero items, we've exhausted all pages
+      if (nextItems.length === 0) break
+
+      let newCount = 0
+      for (const item of nextItems) {
+        const key = dedupeKey(item)
+        if (key && !seen.has(key)) {
+          seen.add(key)
+          allItems.push(item)
+          newCount++
+        }
+      }
+
+      currentOffset += PER_CALL_MAX
+
+      // If a pass returned zero new unique items, further passes are unlikely to help
+      if (newCount === 0) break
+    } catch {
+      // Swallow errors on additional passes; we already have seed data
+      continue
+    }
+  }
+
+  // Return a synthetic result containing all accumulated items
+  return {
+    success: true,
+    result: { requests: allItems },
+    error: undefined,
+  }
+}
+
+/** Build a stable deduplication key from a raw pending request object. */
+function dedupeKey(item: unknown): string | null {
+  if (!isRecord(item)) return null
+  const key = firstNonEmptyString(item.requestkey, item.request_key, item.key)
+  const id = firstNonEmptyString(item.requestid, item.request_id, item.id) ||
+    firstFiniteNumberAsString(item.request_key, item.requestkey, item.id)
+  return key || id || null
 }
 
 function isRetryablePendingError(error: string | undefined): boolean {

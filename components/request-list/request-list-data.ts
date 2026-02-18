@@ -21,7 +21,8 @@ const inFlightSnippetRequests = new Map<string, Promise<PopulateSnippetResult>>(
 
 export async function loadPendingRequests(
   saviyntUsername?: string,
-  saviyntPassword?: string
+  saviyntPassword?: string,
+  options: { refresh?: boolean; passes?: number } = {}
 ): Promise<{
   requests: McpPendingRequest[]
   error: string | null
@@ -34,7 +35,9 @@ export async function loadPendingRequests(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        max: 10,
+        max: options.passes && options.passes > 1 ? options.passes * 10 : 10,
+        refresh: options.refresh ?? false,
+        passes: options.passes ?? 1,
         serverUrl: parsedConfig?.serverUrl || '',
         authHeader: parsedConfig?.authHeader || '',
         saviyntUsername: saviyntUsername || '',

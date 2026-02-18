@@ -5,7 +5,7 @@ import { Card, CardHeader, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AlertCircle, Clock, ShieldAlert, RefreshCw } from 'lucide-react'
+import { AlertCircle, Clock, ShieldAlert, RefreshCw, DownloadCloud } from 'lucide-react'
 import type { McpPendingRequest } from '@/lib/mcp/types'
 import { cn } from '@/lib/utils'
 import { RequestCard } from './request-list/request-card'
@@ -34,6 +34,7 @@ export function RequestList({
     type: 'success' | 'info' | 'error'
     message: string
   } | null>(null)
+  const [requestRefreshing, setRequestRefreshing] = useState(false)
 
   useEffect(() => {
     if (!mcpConnected) {
@@ -133,6 +134,45 @@ export function RequestList({
     }
   }, [apiKey, requests, snippetRefreshing])
 
+  const handleRefreshRequests = useCallback(async () => {
+    if (requestRefreshing) return
+
+    setRequestRefreshing(true)
+    setSnippetStatus({
+      type: 'info',
+      message: 'Fetching pending requests (multi-pass)…',
+    })
+
+    try {
+      const result = await loadPendingRequests(saviyntUsername, saviyntPassword, {
+        refresh: true,
+        passes: 5,
+      })
+
+      if (result.error) {
+        setSnippetStatus({
+          type: 'error',
+          message: result.error,
+        })
+        return
+      }
+
+      setRequests(result.requests)
+      setError(null)
+      setSnippetStatus({
+        type: 'success',
+        message: `Found ${result.requests.length} pending request${result.requests.length === 1 ? '' : 's'}.`,
+      })
+
+      // Automatically populate AI insights for any new requests
+      if (result.requests.length > 0) {
+        void populateAgentSnippets(result.requests, apiKey, setRequests)
+      }
+    } finally {
+      setRequestRefreshing(false)
+    }
+  }, [apiKey, requestRefreshing, saviyntUsername, saviyntPassword])
+
   if (!mcpConnected) {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-8">
@@ -213,12 +253,22 @@ export function RequestList({
           <Button
             variant="outline"
             size="sm"
+            onClick={() => void handleRefreshRequests()}
+            disabled={requestRefreshing}
+            className="h-8 bg-background text-xs"
+          >
+            <DownloadCloud className={cn('mr-1.5 h-3.5 w-3.5', requestRefreshing && 'animate-pulse')} />
+            {requestRefreshing ? 'Fetching…' : 'Refresh Requests'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => void handleRefreshInsights()}
             disabled={snippetRefreshing}
             className="h-8 bg-background text-xs"
           >
             <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', snippetRefreshing && 'animate-spin')} />
-            {snippetRefreshing ? 'Refreshing...' : 'Refresh Insights'}
+            {snippetRefreshing ? 'Refreshing…' : 'Refresh Insights'}
           </Button>
           <Badge variant="outline" className="bg-background">
             {requests.length} Requests
