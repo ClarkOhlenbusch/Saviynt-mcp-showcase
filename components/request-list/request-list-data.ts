@@ -144,7 +144,6 @@ export async function populateAgentSnippets(
         body: JSON.stringify({
           apiKey,
           force: options.force === true,
-          allowHeuristicOnError: false,
           requests: targets.map((item) => ({
             requestid: item.requestid,
             requestkey: item.requestkey,

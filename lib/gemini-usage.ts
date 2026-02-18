@@ -1,4 +1,5 @@
 export const GEMINI_FLASH_3_PREVIEW_MODEL = 'gemini-3-flash-preview'
+export const GEMINI_SNIPPETS_MODEL = 'gemini-2.5-flash-lite'
 
 const DEFAULT_FREE_TIER_LIMITS = {
   rpm: 10,

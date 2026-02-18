@@ -1,7 +1,7 @@
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { generateObject } from 'ai'
 import { z } from 'zod'
-import { GEMINI_FLASH_3_PREVIEW_MODEL } from '@/lib/gemini-usage'
+import { GEMINI_SNIPPETS_MODEL } from '@/lib/gemini-usage'
 import {
   buildPrompt,
   buildSnippetCacheKey,
@@ -20,7 +20,7 @@ import {
 const MAX_OUTPUT_TOKENS = 900
 const SNIPPET_CACHE_TTL_MS = parsePositiveInt(process.env.ACCESS_REVIEW_SNIPPET_CACHE_TTL_MS, 15 * 60_000)
 export const RATE_LIMIT_COOLDOWN_MS = parsePositiveInt(process.env.ACCESS_REVIEW_SNIPPET_RATE_LIMIT_COOLDOWN_MS, 60_000)
-const AI_TIMEOUT_MS = parsePositiveInt(process.env.ACCESS_REVIEW_SNIPPET_TIMEOUT_MS, 8_000)
+const AI_TIMEOUT_MS = parsePositiveInt(process.env.ACCESS_REVIEW_SNIPPET_TIMEOUT_MS, 30_000)
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
 const GROQ_INSIGHTS_MODEL = (process.env.ACCESS_REVIEW_GROQ_MODEL || 'allam-2-7b').trim()
 
@@ -234,15 +234,11 @@ async function generateGeminiSnippets(
   const prompt = buildPrompt(requests)
   const result = await withTimeout(
     generateObject({
-      model: modelProvider(GEMINI_FLASH_3_PREVIEW_MODEL),
+      model: modelProvider(GEMINI_SNIPPETS_MODEL),
       schema: SnippetSchema,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
+      maxRetries: 2,
       prompt,
-      providerOptions: {
-        google: {
-          thinkingConfig: { includeThoughts: false, thinkingLevel: 'low' },
-        },
-      },
     }),
     AI_TIMEOUT_MS,
     `Snippet generation timed out after ${Math.ceil(AI_TIMEOUT_MS / 1000)}s`
