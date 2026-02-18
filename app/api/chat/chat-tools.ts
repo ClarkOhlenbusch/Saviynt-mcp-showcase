@@ -18,6 +18,7 @@ type BuildAiToolsParams = {
   mcpConfig: McpServerConfig | null
   gatewayConfig: ToolGatewayConfig
   maxParallelCalls: number
+  saviyntCredentials?: { username: string; password: string }
 }
 
 const toolSchemaCache = new Map<string, z.ZodObject<Record<string, z.ZodTypeAny>>>()
@@ -27,6 +28,7 @@ export function buildAiTools({
   mcpConfig,
   gatewayConfig,
   maxParallelCalls,
+  saviyntCredentials,
 }: BuildAiToolsParams): ToolSet {
   const mcpToolsByName = new Map(mcpTools.map((toolSchema) => [toolSchema.name, toolSchema] as const))
   const aiTools: ToolSet = {}
@@ -42,7 +44,7 @@ export function buildAiTools({
       inputSchema,
       execute: async (args: unknown) => {
         const toolArgs = isRecord(args) ? args : {}
-        const result = await callTool(mcpTool.name, toolArgs, mcpConfig || undefined)
+        const result = await callTool(mcpTool.name, toolArgs, mcpConfig || undefined, saviyntCredentials)
         if (!result.success) {
           return { error: result.error, toolName: mcpTool.name }
         }
@@ -183,7 +185,7 @@ export function buildAiTools({
         for (let index = 0; index < uniqueCalls.length; index++) {
           const call = uniqueCalls[index]
           const startedAt = Date.now()
-          const task = callTool(call.toolName, call.args, mcpConfig || undefined)
+          const task = callTool(call.toolName, call.args, mcpConfig || undefined, saviyntCredentials)
             .then((result) => ({ index, result }))
             .catch((err) => ({
               index,

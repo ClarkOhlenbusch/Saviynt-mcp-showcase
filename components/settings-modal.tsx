@@ -11,7 +11,8 @@ import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
-import { Shield, Server, Eye, Wrench, RefreshCw } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Shield, Server, Eye, Wrench, RefreshCw, UserCircle, Lock } from 'lucide-react'
 import type { McpToolSchema } from '@/lib/mcp/types'
 
 interface SettingsModalProps {
@@ -47,9 +48,10 @@ export function SettingsModal({
         <DialogHeader>
           <DialogTitle className="text-foreground">Settings</DialogTitle>
           <DialogDescription className="text-muted-foreground">
-            MCP connection and security policies.
+            MCP connection, security policies, and Saviynt credentials.
           </DialogDescription>
         </DialogHeader>
+
 
         {/* MCP Connection */}
         <div className="flex flex-col gap-3">

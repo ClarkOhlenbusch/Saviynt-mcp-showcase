@@ -20,9 +20,11 @@ export function resetConnection(
 ) {
   const { cancelReader = false, rejectPending = false } = options
   const readerToCancel = runtime.sseReader
+  const controllerToAbort = runtime.sseAbortController
 
   runtime.sseReader = null
   runtime.sseMessageEndpoint = null
+  runtime.sseAbortController = null
   runtime.connectionStatus = { ...runtime.connectionStatus, connected: false, error: reason }
 
   if (rejectPending) {
@@ -34,6 +36,15 @@ export function resetConnection(
       readerToCancel.cancel()
     } catch {
       // Ignore reader cancellation failures during reconnect/reset
+    }
+  }
+
+  // Abort the underlying fetch to release the TCP socket and any buffered data
+  if (controllerToAbort) {
+    try {
+      controllerToAbort.abort()
+    } catch {
+      // Ignore abort failures
     }
   }
 }
@@ -113,15 +124,20 @@ export async function openSSEConnection(
   const sseUrl = serverUrl.endsWith('/sse') ? serverUrl : `${serverUrl}/sse`
   const headers = getHeaders(config)
 
+  // Create an AbortController so the underlying fetch can be torn down on reset
+  const controller = new AbortController()
+
   console.log(`[MCP] Opening SSE connection to ${sseUrl}...`)
-  const response = await fetch(sseUrl, { headers })
+  const response = await fetch(sseUrl, { headers, signal: controller.signal })
 
   if (!response.ok) {
+    controller.abort()
     throw new Error(`SSE connection failed: ${response.status}`)
   }
 
   const reader = response.body?.getReader()
   if (!reader) {
+    controller.abort()
     throw new Error('ReadableStream not supported')
   }
 
@@ -132,7 +148,10 @@ export async function openSSEConnection(
   const startTime = Date.now()
   while (!messageEndpoint && Date.now() - startTime < 10000) {
     const { done, value } = await reader.read()
-    if (done) throw new Error('SSE stream ended before receiving message endpoint')
+    if (done) {
+      controller.abort()
+      throw new Error('SSE stream ended before receiving message endpoint')
+    }
 
     buffer += decoder.decode(value, { stream: true })
     const lines = buffer.split('\n')
@@ -150,6 +169,7 @@ export async function openSSEConnection(
 
   if (!messageEndpoint) {
     reader.cancel()
+    controller.abort()
     throw new Error('SSE message endpoint timeout')
   }
 
@@ -162,6 +182,7 @@ export async function openSSEConnection(
 
   runtime.sseReader = reader
   runtime.sseMessageEndpoint = fullEndpoint
+  runtime.sseAbortController = controller
 
   void startSSEReader(runtime, pendingRequests, reader, buffer)
 
@@ -198,8 +219,15 @@ export async function mcpRequest(
 
   if (!response.ok) {
     pendingRequests.delete(requestId)
+    // Drain the response body to prevent memory leaks from unconsumed fetch responses
+    try { await response.text() } catch { /* ignore drain errors */ }
     throw new Error(`Request to message endpoint failed: ${response.status}`)
   }
+
+  // Drain the response body immediately – the actual result arrives via SSE,
+  // so this POST response body is empty/irrelevant but MUST be consumed to
+  // free the browser's internal fetch buffer and prevent memory leaks.
+  try { await response.text() } catch { /* ignore drain errors */ }
 
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null
   const timeoutPromise = new Promise<never>((_, reject) => {

@@ -31,6 +31,8 @@ export async function POST(req: Request) {
   const parsedBody = isRecord(body) ? body : {}
   const messages = parsedBody.messages
   const apiKey = typeof parsedBody.apiKey === 'string' ? parsedBody.apiKey : ''
+  const saviyntUsername = typeof parsedBody.saviyntUsername === 'string' ? parsedBody.saviyntUsername : ''
+  const saviyntPassword = typeof parsedBody.saviyntPassword === 'string' ? parsedBody.saviyntPassword : ''
   const selectedRequest = isRecord(parsedBody.selectedRequest) ? parsedBody.selectedRequest : null
   const redactionEnabled = parsedBody.redactionEnabled !== false
   const destructiveActionsEnabled = parsedBody.destructiveActionsEnabled === true
@@ -71,6 +73,9 @@ export async function POST(req: Request) {
     mcpConfig,
     gatewayConfig,
     maxParallelCalls: MAX_PARALLEL_CALLS,
+    saviyntCredentials: saviyntUsername && saviyntPassword
+      ? { username: saviyntUsername, password: saviyntPassword }
+      : undefined,
   })
 
   const modelProvider = createGoogleGenerativeAI({

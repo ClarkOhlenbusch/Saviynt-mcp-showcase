@@ -16,6 +16,8 @@ type ParsedPayload =
         confirmed: boolean
         destructiveActionsEnabled: boolean
         redactionEnabled: boolean
+        saviyntUsername?: string
+        saviyntPassword?: string
       }
     }
   | {
@@ -39,6 +41,8 @@ export async function POST(req: Request) {
       confirmed,
       destructiveActionsEnabled,
       redactionEnabled,
+      saviyntUsername,
+      saviyntPassword,
     } = parsed.value
 
     if (!confirmed) {
@@ -80,7 +84,10 @@ export async function POST(req: Request) {
     }
 
     const args = buildDecisionArgs(toolSchema, request, decision, comment)
-    const result = await callTool(APPROVAL_TOOL_NAME, args)
+    const saviyntCredentials = saviyntUsername && saviyntPassword
+      ? { username: saviyntUsername, password: saviyntPassword }
+      : undefined
+    const result = await callTool(APPROVAL_TOOL_NAME, args, undefined, saviyntCredentials)
 
     if (!result.success) {
       return Response.json(
@@ -139,6 +146,8 @@ function parsePayload(value: unknown): ParsedPayload {
       confirmed: value.confirmed === true,
       destructiveActionsEnabled: value.destructiveActionsEnabled === true,
       redactionEnabled: value.redactionEnabled !== false,
+      saviyntUsername: typeof value.saviyntUsername === 'string' ? value.saviyntUsername : undefined,
+      saviyntPassword: typeof value.saviyntPassword === 'string' ? value.saviyntPassword : undefined,
     },
   }
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { ZapOff } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { Button } from '@/components/ui/button'
@@ -41,6 +41,7 @@ export default function Page() {
   const [faqOpen, setFaqOpen] = useState(false)
   const [artifactsOpen, setArtifactsOpen] = useState(false)
   const [apiKeyDialogOpen, setApiKeyDialogOpen] = useState(false)
+  const [saviyntDialogOpen, setSaviyntDialogOpen] = useState(false)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [chatSessionKey, setChatSessionKey] = useState(0)
 
@@ -52,7 +53,12 @@ export default function Page() {
   useEffect(() => setMounted(true), [])
 
   const [apiKey, setApiKey] = useState('')
+  const [saviyntUsername, setSaviyntUsername] = useState('')
+  const [saviyntPassword, setSaviyntPassword] = useState('')
   const geminiUsage = useGeminiUsage()
+
+  // In-flight guard to prevent overlapping polling requests from accumulating
+  const pendingRefreshInFlightRef = useRef(false)
 
   const handleSelectRequest = useCallback((request: McpPendingRequest) => {
     setSelectedRequest(request)
@@ -67,12 +73,18 @@ export default function Page() {
       return
     }
 
+    // Skip if a refresh is already in progress to prevent memory build-up
+    if (pendingRefreshInFlightRef.current) return
+    pendingRefreshInFlightRef.current = true
+
     try {
       const snapshot = await fetchPendingRequestSnapshot(forceRefresh)
       setPendingRequestsSnapshot(snapshot.items)
       setPendingRequestsSnapshotUpdatedAt(snapshot.fetchedAt)
     } catch {
       // Non-blocking optimization path: ignore transient fetch errors.
+    } finally {
+      pendingRefreshInFlightRef.current = false
     }
   }, [mcpStatus.connected])
 
@@ -80,6 +92,16 @@ export default function Page() {
     const savedKey = localStorage.getItem('gemini_api_key')
     if (savedKey) {
       setApiKey(savedKey)
+    }
+
+    const savedUsername = localStorage.getItem('saviynt_username')
+    if (savedUsername) {
+      setSaviyntUsername(savedUsername)
+    }
+
+    const savedPassword = localStorage.getItem('saviynt_password')
+    if (savedPassword) {
+      setSaviyntPassword(savedPassword)
     }
   }, [])
 
@@ -136,6 +158,16 @@ export default function Page() {
     localStorage.setItem('gemini_api_key', key)
   }
 
+  const handleSaviyntUsernameChange = (value: string) => {
+    setSaviyntUsername(value)
+    localStorage.setItem('saviynt_username', value)
+  }
+
+  const handleSaviyntPasswordChange = (value: string) => {
+    setSaviyntPassword(value)
+    localStorage.setItem('saviynt_password', value)
+  }
+
   const handleRefreshTools = useCallback(async () => {
     setRefreshingTools(true)
     try {
@@ -188,7 +220,9 @@ export default function Page() {
         onOpenConfigDialog={() => setConfigDialogOpen(true)}
         onToggleArtifacts={() => setArtifactsOpen((prev) => !prev)}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSaviyntCredentials={() => setSaviyntDialogOpen(true)}
         onToggleTheme={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+        saviyntSet={Boolean(saviyntUsername && saviyntPassword)}
         artifactsCount={artifacts.length}
       />
 
@@ -225,6 +259,8 @@ export default function Page() {
             onOpenArtifacts={() => setArtifactsOpen(true)}
             artifactCount={artifacts.length}
             apiKey={apiKey}
+            saviyntUsername={saviyntUsername}
+            saviyntPassword={saviyntPassword}
             onOpenFaq={() => setFaqOpen(true)}
             onOpenStartHere={() => setGuideOpen(true)}
             onUsageEvent={handleUsageEvent}
@@ -240,6 +276,8 @@ export default function Page() {
             mcpConnected={mcpStatus.connected}
             onSelectRequest={handleSelectRequest}
             apiKey={apiKey}
+            saviyntUsername={saviyntUsername}
+            saviyntPassword={saviyntPassword}
           />
         )}
       </main>
@@ -253,12 +291,18 @@ export default function Page() {
         setApiKeyDialogOpen={setApiKeyDialogOpen}
         apiKey={apiKey}
         onApiKeyChange={handleApiKeyChange}
+        saviyntUsername={saviyntUsername}
+        onSaviyntUsernameChange={handleSaviyntUsernameChange}
+        saviyntPassword={saviyntPassword}
+        onSaviyntPasswordChange={handleSaviyntPasswordChange}
         guideOpen={guideOpen}
         setGuideOpen={setGuideOpen}
         faqOpen={faqOpen}
         setFaqOpen={setFaqOpen}
         settingsOpen={settingsOpen}
         setSettingsOpen={setSettingsOpen}
+        saviyntDialogOpen={saviyntDialogOpen}
+        setSaviyntDialogOpen={setSaviyntDialogOpen}
         artifactsOpen={artifactsOpen}
         setArtifactsOpen={setArtifactsOpen}
         apiKeySet={Boolean(apiKey)}

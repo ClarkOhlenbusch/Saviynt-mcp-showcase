@@ -33,6 +33,8 @@ export async function fetchPendingRequestSnapshot(forceRefresh = false): Promise
 }> {
   const savedConfig = localStorage.getItem(MCP_CONFIG_STORAGE_KEY)
   const parsedConfig = savedConfig ? parseMcpConfig(savedConfig) : null
+  const saviyntUsername = localStorage.getItem('saviynt_username') || ''
+  const saviyntPassword = localStorage.getItem('saviynt_password') || ''
 
   const res = await fetch('/api/access-reviews/pending', {
     method: 'POST',
@@ -42,6 +44,8 @@ export async function fetchPendingRequestSnapshot(forceRefresh = false): Promise
       refresh: forceRefresh,
       serverUrl: parsedConfig?.serverUrl || '',
       authHeader: parsedConfig?.authHeader || '',
+      saviyntUsername,
+      saviyntPassword,
     }),
   })
 

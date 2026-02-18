@@ -4,6 +4,7 @@ import { FAQDialog } from '@/components/faq-dialog'
 import { McpConfigDialog } from '@/components/mcp-config-dialog'
 import { QuickStartGuideDialog } from '@/components/quick-start-guide-dialog'
 import { SettingsModal } from '@/components/settings-modal'
+import { SaviyntCredentialsDialog } from '@/components/saviynt-credentials-dialog'
 import type { Artifact, McpToolSchema } from '@/lib/mcp/types'
 
 type PageDialogsProps = {
@@ -15,12 +16,18 @@ type PageDialogsProps = {
   setApiKeyDialogOpen: (open: boolean) => void
   apiKey: string
   onApiKeyChange: (key: string) => void
+  saviyntUsername: string
+  onSaviyntUsernameChange: (value: string) => void
+  saviyntPassword: string
+  onSaviyntPasswordChange: (value: string) => void
   guideOpen: boolean
   setGuideOpen: (open: boolean) => void
   faqOpen: boolean
   setFaqOpen: (open: boolean) => void
   settingsOpen: boolean
   setSettingsOpen: (open: boolean) => void
+  saviyntDialogOpen: boolean
+  setSaviyntDialogOpen: (open: boolean) => void
   artifactsOpen: boolean
   setArtifactsOpen: (open: boolean) => void
   apiKeySet: boolean
@@ -45,12 +52,18 @@ export function PageDialogs({
   setApiKeyDialogOpen,
   apiKey,
   onApiKeyChange,
+  saviyntUsername,
+  onSaviyntUsernameChange,
+  saviyntPassword,
+  onSaviyntPasswordChange,
   guideOpen,
   setGuideOpen,
   faqOpen,
   setFaqOpen,
   settingsOpen,
   setSettingsOpen,
+  saviyntDialogOpen,
+  setSaviyntDialogOpen,
   artifactsOpen,
   setArtifactsOpen,
   apiKeySet,
@@ -108,6 +121,15 @@ export function PageDialogs({
         onDestructiveChange={onDestructiveChange}
         onRefreshTools={onRefreshTools}
         refreshing={refreshing}
+      />
+
+      <SaviyntCredentialsDialog
+        open={saviyntDialogOpen}
+        onOpenChange={setSaviyntDialogOpen}
+        saviyntUsername={saviyntUsername}
+        onSaviyntUsernameChange={onSaviyntUsernameChange}
+        saviyntPassword={saviyntPassword}
+        onSaviyntPasswordChange={onSaviyntPasswordChange}
       />
 
       <ArtifactPanel

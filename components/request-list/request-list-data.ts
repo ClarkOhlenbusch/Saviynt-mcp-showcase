@@ -19,7 +19,10 @@ export type PopulateSnippetResult = {
 
 const inFlightSnippetRequests = new Map<string, Promise<PopulateSnippetResult>>()
 
-export async function loadPendingRequests(): Promise<{
+export async function loadPendingRequests(
+  saviyntUsername?: string,
+  saviyntPassword?: string
+): Promise<{
   requests: McpPendingRequest[]
   error: string | null
 }> {
@@ -34,6 +37,8 @@ export async function loadPendingRequests(): Promise<{
         max: 10,
         serverUrl: parsedConfig?.serverUrl || '',
         authHeader: parsedConfig?.authHeader || '',
+        saviyntUsername: saviyntUsername || '',
+        saviyntPassword: saviyntPassword || '',
       }),
     })
 
@@ -52,9 +57,9 @@ export async function loadPendingRequests(): Promise<{
           const autoLoginConfigured = errorPayload.autoLoginConfigured === true
           const loginAttempted = errorPayload.loginAttempted === true
           if (!autoLoginConfigured) {
-            errorMessage = `${errorMessage} Set SAVIYNT_USERNAME and SAVIYNT_PASSWORD in .env for automatic Saviynt login.`
+            errorMessage = `${errorMessage} Set your Saviynt credentials in Settings for automatic login.`
           } else if (loginAttempted) {
-            errorMessage = `${errorMessage} Verify SAVIYNT_USERNAME and SAVIYNT_PASSWORD values.`
+            errorMessage = `${errorMessage} Verify your Saviynt credentials in Settings.`
           }
         }
       } catch {

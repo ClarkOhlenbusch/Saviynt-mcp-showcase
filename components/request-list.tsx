@@ -15,9 +15,17 @@ interface RequestListProps {
   onSelectRequest: (request: McpPendingRequest) => void
   mcpConnected: boolean
   apiKey: string
+  saviyntUsername?: string
+  saviyntPassword?: string
 }
 
-export function RequestList({ onSelectRequest, mcpConnected, apiKey }: RequestListProps) {
+export function RequestList({
+  onSelectRequest,
+  mcpConnected,
+  apiKey,
+  saviyntUsername,
+  saviyntPassword,
+}: RequestListProps) {
   const [requests, setRequests] = useState<McpPendingRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -57,7 +65,7 @@ export function RequestList({ onSelectRequest, mcpConnected, apiKey }: RequestLi
 
       setLoading(true)
       try {
-        const result = await loadPendingRequests()
+        const result = await loadPendingRequests(saviyntUsername, saviyntPassword)
         if (result.error) {
           setRequests([])
           setError(result.error)

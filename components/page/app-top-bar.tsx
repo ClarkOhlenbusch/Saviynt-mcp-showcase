@@ -1,4 +1,4 @@
-import { Settings, Zap, FileText, Key, HelpCircle, Github, BookOpen, Plus, Sun, Moon } from 'lucide-react'
+import { Settings, Zap, FileText, Key, HelpCircle, Github, BookOpen, Plus, Sun, Moon, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatusBar } from '@/components/status-bar'
 import type { McpConnectionStatus, McpToolSchema } from '@/lib/mcp/types'
@@ -20,7 +20,9 @@ type AppTopBarProps = {
   onOpenConfigDialog: () => void
   onToggleArtifacts: () => void
   onOpenSettings: () => void
+  onOpenSaviyntCredentials: () => void
   onToggleTheme: () => void
+  saviyntSet: boolean
   artifactsCount: number
 }
 
@@ -40,8 +42,10 @@ export function AppTopBar({
   onOpenConfigDialog,
   onToggleArtifacts,
   onOpenSettings,
+  onOpenSaviyntCredentials,
   onToggleTheme,
   artifactsCount,
+  saviyntSet,
 }: AppTopBarProps) {
   return (
     <header className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-card/50 backdrop-blur-sm shrink-0">
@@ -86,45 +90,67 @@ export function AppTopBar({
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 overflow-x-auto shrink-0">
         <Button
           variant="outline"
           size="sm"
           onClick={onNewChat}
-          className="h-7 text-xs gap-1.5 border-border text-muted-foreground hover:text-foreground bg-transparent"
+          className="h-7 text-xs gap-1.5 border-border text-muted-foreground hover:text-foreground bg-transparent shrink-0"
         >
           <Plus className="h-3 w-3" />
           New Chat
         </Button>
 
         <Button
+          variant="ghost"
+          size="sm"
+          onClick={onOpenSettings}
+          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground shrink-0"
+          aria-label="Settings"
+          title="Settings & Saviynt Credentials"
+        >
+          <Settings className="h-4 w-4" />
+        </Button>
+
+        <Button
           variant="default"
           size="sm"
           onClick={onOpenGuide}
-          className="h-7 px-2 sm:px-2.5 text-xs gap-1.5"
+          className="h-7 px-2 sm:px-2.5 text-xs gap-1.5 shrink-0"
         >
           <BookOpen className="h-3 w-3" />
           <span className="hidden sm:inline">Start Here</span>
         </Button>
 
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
           onClick={onOpenFaq}
-          className="h-7 text-xs gap-1.5 border-border text-muted-foreground hover:text-foreground bg-transparent"
+          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground shrink-0"
+          aria-label="FAQ"
+          title="FAQ"
         >
-          <HelpCircle className="h-3 w-3" />
-          FAQ
+          <HelpCircle className="h-3.5 w-3.5" />
+        </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onOpenSaviyntCredentials}
+          className={`h-7 text-xs gap-1.5 border-border bg-transparent shrink-0 ${saviyntSet ? 'text-primary border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
+        >
+          <ShieldCheck className="h-3 w-3" />
+          {saviyntSet ? 'EIC Credentials Set' : 'Add EIC Credentials'}
         </Button>
 
         <Button
           variant="outline"
           size="sm"
           onClick={onOpenApiKeyDialog}
-          className={`h-7 text-xs gap-1.5 border-border bg-transparent ${apiKey ? 'text-primary border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
+          className={`h-7 text-xs gap-1.5 border-border bg-transparent shrink-0 ${apiKey ? 'text-primary border-primary/20' : 'text-muted-foreground hover:text-foreground'}`}
         >
           <Key className="h-3 w-3" />
-          {apiKey ? 'API Key Set' : 'Add API Key'}
+          {apiKey ? 'API Token Set' : 'Add API Token'}
         </Button>
 
         {!mcpStatus.connected ? (
@@ -132,7 +158,7 @@ export function AppTopBar({
             variant="outline"
             size="sm"
             onClick={onOpenConfigDialog}
-            className="h-7 text-xs gap-1.5 border-border text-muted-foreground hover:text-foreground bg-transparent"
+            className="h-7 text-xs gap-1.5 border-border text-muted-foreground hover:text-foreground bg-transparent shrink-0"
           >
             <Zap className="h-3 w-3" />
             Connect MCP
@@ -142,7 +168,7 @@ export function AppTopBar({
             variant="outline"
             size="sm"
             onClick={onOpenConfigDialog}
-            className="h-7 text-xs gap-1.5 border-accent/30 text-accent hover:text-accent bg-transparent"
+            className="h-7 text-xs gap-1.5 border-accent/30 text-accent hover:text-accent bg-transparent shrink-0"
           >
             <Zap className="h-3 w-3" />
             Connected
@@ -153,7 +179,7 @@ export function AppTopBar({
           variant="ghost"
           size="sm"
           onClick={onToggleArtifacts}
-          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground relative"
+          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground relative shrink-0"
           aria-label="Open artifacts"
         >
           <FileText className="h-4 w-4" />
@@ -168,7 +194,7 @@ export function AppTopBar({
           asChild
           variant="ghost"
           size="sm"
-          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground shrink-0"
         >
           <a
             href="https://github.com/ClarkOhlenbusch/Saviynt-mcp-showcase"
@@ -186,22 +212,12 @@ export function AppTopBar({
             variant="ghost"
             size="sm"
             onClick={onToggleTheme}
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground shrink-0"
             aria-label="Toggle theme"
           >
             {resolvedTheme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
         )}
-
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onOpenSettings}
-          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-          aria-label="Settings"
-        >
-          <Settings className="h-4 w-4" />
-        </Button>
       </div>
     </header>
   )

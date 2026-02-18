@@ -34,6 +34,8 @@ interface ChatPanelProps {
   onOpenArtifacts: () => void
   artifactCount: number
   apiKey: string
+  saviyntUsername?: string
+  saviyntPassword?: string
   onOpenFaq: () => void
   onOpenStartHere: () => void
   onUsageEvent: (event: GeminiUsageEvent) => void
@@ -51,6 +53,8 @@ export function ChatPanel({
   onOpenArtifacts,
   artifactCount,
   apiKey,
+  saviyntUsername,
+  saviyntPassword,
   onOpenFaq,
   onOpenStartHere,
   onUsageEvent,
@@ -73,12 +77,16 @@ export function ChatPanel({
   const [decisionNotice, setDecisionNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   const apiKeyRef = useRef(apiKey)
+  const saviyntUsernameRef = useRef(saviyntUsername)
+  const saviyntPasswordRef = useRef(saviyntPassword)
   const selectedRequestRef = useRef(selectedRequest)
   const redactionEnabledRef = useRef(redactionEnabled)
   const destructiveActionsEnabledRef = useRef(destructiveActionsEnabled)
   const pendingRequestsSnapshotRef = useRef(pendingRequestsSnapshot)
   const pendingRequestsSnapshotUpdatedAtRef = useRef(pendingRequestsSnapshotUpdatedAt)
   useEffect(() => { apiKeyRef.current = apiKey }, [apiKey])
+  useEffect(() => { saviyntUsernameRef.current = saviyntUsername }, [saviyntUsername])
+  useEffect(() => { saviyntPasswordRef.current = saviyntPassword }, [saviyntPassword])
   useEffect(() => { selectedRequestRef.current = selectedRequest }, [selectedRequest])
   useEffect(() => { redactionEnabledRef.current = redactionEnabled }, [redactionEnabled])
   useEffect(() => { destructiveActionsEnabledRef.current = destructiveActionsEnabled }, [destructiveActionsEnabled])
@@ -90,6 +98,8 @@ export function ChatPanel({
       api: '/api/chat',
       body: () => ({
         apiKey: apiKeyRef.current,
+        saviyntUsername: saviyntUsernameRef.current,
+        saviyntPassword: saviyntPasswordRef.current,
         selectedRequest: selectedRequestRef.current,
         redactionEnabled: redactionEnabledRef.current,
         destructiveActionsEnabled: destructiveActionsEnabledRef.current,
@@ -216,6 +226,8 @@ export function ChatPanel({
           confirmed: true,
           destructiveActionsEnabled: destructiveActionsEnabledRef.current,
           redactionEnabled: redactionEnabledRef.current,
+          saviyntUsername: saviyntUsernameRef.current,
+          saviyntPassword: saviyntPasswordRef.current,
         }),
       })
 

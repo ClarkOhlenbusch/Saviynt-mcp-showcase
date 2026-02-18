@@ -17,6 +17,7 @@ export type McpClientRuntime = {
   connectionStatus: McpConnectionStatus
   sseReader: ReadableStreamDefaultReader<Uint8Array> | null
   sseMessageEndpoint: string | null
+  sseAbortController: AbortController | null
   connectInFlight: Promise<McpConnectionStatus> | null
 }
 
@@ -31,6 +32,7 @@ export function createMcpClientRuntime(): McpClientRuntime {
     },
     sseReader: null,
     sseMessageEndpoint: null,
+    sseAbortController: null,
     connectInFlight: null,
   }
 }

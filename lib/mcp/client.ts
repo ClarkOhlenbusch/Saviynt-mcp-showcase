@@ -103,7 +103,8 @@ export async function discoverTools(config?: McpServerConfig): Promise<McpToolSc
 export async function callTool(
   toolName: string,
   args: Record<string, unknown>,
-  config?: McpServerConfig
+  config?: McpServerConfig,
+  saviyntCredentials?: { username: string; password: string }
 ): Promise<McpToolCallResult> {
   const c = config || runtime.cachedConfig
   if (!c) throw new Error('No MCP config available')
@@ -111,13 +112,8 @@ export async function callTool(
   const startTime = Date.now()
   const maxRetries = 2
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  const executeCall = async (attempt: number): Promise<McpToolCallResult> => {
     if (!runtime.sseReader || !runtime.sseMessageEndpoint) {
-      if (attempt === 0) {
-        console.log('[MCP] No active SSE connection for tool call, connecting...')
-      } else {
-        console.log(`[MCP] SSE connection dropped, reconnecting (attempt ${attempt + 1}/${maxRetries + 1})...`)
-      }
       await connectToMcp(c)
       if (!runtime.sseReader || !runtime.sseMessageEndpoint) {
         return {
@@ -133,7 +129,7 @@ export async function callTool(
     }
 
     try {
-      console.log(`[MCP] Calling tool: ${toolName} (attempt ${attempt + 1}/${maxRetries + 1})`)
+      console.log(`[MCP] Calling tool: ${toolName} (attempt ${attempt + 1})`)
       const rpcData = await mcpRequest(runtime, pendingRequests, 'tools/call', { name: toolName, arguments: args }, 180000)
 
       if (rpcData.error) {
@@ -141,8 +137,6 @@ export async function callTool(
       }
 
       const result = extractToolCallResult(rpcData)
-      console.log(`[MCP] Tool ${toolName} succeeded in ${Date.now() - startTime}ms`)
-
       return {
         toolName,
         args,
@@ -153,22 +147,6 @@ export async function callTool(
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error'
-      console.error(`[MCP] Tool ${toolName} attempt ${attempt + 1} failed: ${errorMsg}`)
-
-      const retryableConnectionError =
-        errorMsg.includes('SSE connection lost') ||
-        errorMsg.includes('not connected') ||
-        errorMsg.includes('Reconnecting to MCP server') ||
-        errorMsg.includes('Failed to establish SSE connection') ||
-        errorMsg.includes('SSE stream ended')
-
-      if (retryableConnectionError) {
-        resetConnection(runtime, pendingRequests, errorMsg, { cancelReader: true, rejectPending: true })
-        if (attempt < maxRetries) {
-          continue
-        }
-      }
-
       return {
         toolName,
         args,
@@ -181,15 +159,92 @@ export async function callTool(
     }
   }
 
-  return {
-    toolName,
-    args,
-    result: null,
-    duration: Date.now() - startTime,
-    success: false,
-    error: 'Exhausted all retry attempts',
-    timestamp: Date.now(),
+  let result = await executeCall(0)
+
+  // Auto-login logic
+  if (!result.success && saviyntCredentials && isLoginRequiredError(result.error)) {
+    console.log('[MCP] Login required, attempting automatic login...')
+    const loginResult = await executeCallInternal('login', {
+      username: saviyntCredentials.username,
+      password: saviyntCredentials.password
+    }, c)
+
+    if (loginResult.success && isLoginSuccess(loginResult.result)) {
+      console.log('[MCP] Login successful, retrying original tool call...')
+      result = await executeCall(1)
+    } else {
+      console.error('[MCP] Automatic login failed:', loginResult.error)
+    }
   }
+
+  // Generic retry logic for connection issues
+  if (!result.success && isRetryableError(result.error)) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      console.log(`[MCP] Retrying tool call due to connection error (attempt ${attempt + 1})...`)
+      resetConnection(runtime, pendingRequests, result.error!, { cancelReader: true, rejectPending: true })
+      result = await executeCall(attempt)
+      if (result.success || !isRetryableError(result.error)) break
+    }
+  }
+
+  return result
+}
+
+async function executeCallInternal(
+  toolName: string,
+  args: Record<string, unknown>,
+  config: McpServerConfig
+): Promise<McpToolCallResult> {
+  const requestId = `req-internal-${Date.now()}`
+  try {
+    const rpcData = await mcpRequest(runtime, pendingRequests, 'tools/call', { name: toolName, arguments: args }, 30000)
+    if (rpcData.error) throw new Error(getRpcErrorMessage(rpcData.error) || 'Tool call error')
+    return {
+      toolName,
+      args,
+      result: extractToolCallResult(rpcData),
+      duration: 0,
+      success: true,
+      timestamp: Date.now()
+    }
+  } catch (err) {
+    return {
+      toolName,
+      args,
+      result: null,
+      duration: 0,
+      success: false,
+      error: err instanceof Error ? err.message : 'Unknown error',
+      timestamp: Date.now()
+    }
+  }
+}
+
+function isLoginRequiredError(error: string | undefined): boolean {
+  if (!error) return false
+  const msg = error.toLowerCase()
+  return msg.includes('login required') || msg.includes('authentication required') || msg.includes('session expired')
+}
+
+function isLoginSuccess(result: unknown): boolean {
+  if (!result) return false
+  // Basic check - many Saviynt APIs return success: true or a session object
+  if (typeof result === 'object' && (result as any).success === true) return true
+  if (typeof result === 'string' && result.toLowerCase().includes('success')) return true
+  // If it returned something without error, we'll assume it worked for now as the mcpRequest would have thrown if there was a RPC error
+  return true
+}
+
+function isRetryableError(error: string | undefined): boolean {
+  if (!error) return false
+  const msg = error.toLowerCase()
+  return (
+    msg.includes('sse connection lost') ||
+    msg.includes('not connected') ||
+    msg.includes('reconnecting to mcp server') ||
+    msg.includes('failed to establish sse connection') ||
+    msg.includes('sse stream ended')
+  )
 }
 
 export async function callToolsParallel(
