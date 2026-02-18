@@ -55,7 +55,7 @@ export function AppTopBar({
             <img
               src="https://saviynt.com/hubfs/raw_assets/saviynt-theme-26/169/js_client_assets/assets/saviynt-logo-DWEmNKg8.svg"
               alt="Saviynt"
-              className="h-5 w-auto"
+              className="h-5 w-auto dark:invert"
               loading="eager"
             />
             <h1 className="text-sm font-semibold text-foreground hidden sm:block ml-1">MCP Agent</h1>
